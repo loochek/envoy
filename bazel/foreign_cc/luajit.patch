@@ -158,6 +158,7 @@ index 00000000..1201542c
 +
 +    # Don't strip the binary - it doesn't work when cross-compiling, and we don't use it anyway.
 +    os.environ["TARGET_STRIP"] = "@echo"
++    os.environ["MAKE"] = "/usr/bin/make"
 +
 +    # Remove LuaJIT from ASAN for now.
 +    # TODO(htuch): Remove this when https://github.com/envoyproxy/envoy/issues/6084 is resolved.
