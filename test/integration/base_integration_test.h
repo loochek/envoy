@@ -9,7 +9,7 @@
 #include "envoy/server/process_context.h"
 #include "envoy/service/discovery/v3/discovery.pb.h"
 
-#include "source/extensions/transport_sockets/tls/context_manager_impl.h"
+#include "source/common/tls/context_manager_impl.h"
 
 #include "test/common/grpc/grpc_client_integration.h"
 #include "test/config/utility.h"
@@ -474,6 +474,13 @@ protected:
 
   void checkForMissingTagExtractionRules();
 
+  // Sets the timeout to wait for listeners to be created before invoking
+  // registerTestServerPorts(), as that needs to know about the bound listener ports.
+  // Needs to be called before invoking createEnvoy() (invoked during initialize()).
+  void setListenersBoundTimeout(const std::chrono::milliseconds& duration) {
+    listeners_bound_timeout_ms_ = duration;
+  }
+
   std::unique_ptr<Stats::Store> upstream_stats_store_;
 
   // Make sure the test server will be torn down after any fake client.
@@ -516,8 +523,10 @@ protected:
 
   Network::DownstreamTransportSocketFactoryPtr
   createUpstreamTlsContext(const FakeUpstreamConfig& upstream_config);
+  testing::NiceMock<ThreadLocal::MockInstance> thread_local_;
   testing::NiceMock<Server::Configuration::MockTransportSocketFactoryContext> factory_context_;
-  Extensions::TransportSockets::Tls::ContextManagerImpl context_manager_{timeSystem()};
+  testing::NiceMock<Server::Configuration::MockServerFactoryContext> server_factory_context_;
+  Extensions::TransportSockets::Tls::ContextManagerImpl context_manager_{server_factory_context_};
 
   // The fake upstreams_ are created using the context_manager, so make sure
   // they are destroyed before it is.
@@ -526,6 +535,13 @@ protected:
   Grpc::SotwOrDelta sotw_or_delta_{Grpc::SotwOrDelta::Sotw};
 
   spdlog::level::level_enum default_log_level_;
+
+  // Timeout to wait for listeners to be created before invoking
+  // registerTestServerPorts(), as that needs to know about the bound listener ports.
+  // Using 2x default timeout to cover for slow TLS implementations (no inline asm) on slow
+  // computers (e.g., Raspberry Pi) that sometimes time out on TLS listeners, or when
+  // the number of listeners in a test is large.
+  std::chrono::milliseconds listeners_bound_timeout_ms_{2 * TestUtility::DefaultTimeout};
 
   // Target number of upstreams.
   uint32_t fake_upstreams_count_{1};
@@ -556,7 +572,7 @@ protected:
   bool use_real_stats_{};
 
   // If true, skip checking stats for missing tag-extraction rules.
-  bool skip_tag_extraction_rule_check_{};
+  bool skip_tag_extraction_rule_check_{true};
 
   // By default, node metadata (node name, cluster name, locality) for the test server gets set to
   // hard-coded values in the OptionsImpl ("node_name", "cluster_name", etc.). Set to true if your

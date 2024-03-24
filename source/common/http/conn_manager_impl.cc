@@ -65,6 +65,9 @@ const absl::string_view ConnectionManagerImpl::PrematureResetMinStreamLifetimeSe
 // I/O cycle. Requests over this limit are deferred until the next I/O cycle.
 const absl::string_view ConnectionManagerImpl::MaxRequestsPerIoCycle =
     "http.max_requests_per_io_cycle";
+// Don't attempt to intelligently delay close: https://github.com/envoyproxy/envoy/issues/30010
+const absl::string_view ConnectionManagerImpl::OptionallyDelayClose =
+    "http1.optionally_delay_close";
 
 bool requestWasConnect(const RequestHeaderMapSharedPtr& headers, Protocol protocol) {
   if (!headers) {
@@ -111,8 +114,10 @@ ConnectionManagerImpl::ConnectionManagerImpl(ConnectionManagerConfig& config,
       cluster_manager_(cluster_manager), listener_stats_(config_.listenerStats()),
       overload_manager_(overload_manager),
       overload_state_(overload_manager.getThreadLocalOverloadState()),
-      accept_new_http_stream_(overload_manager.getLoadShedPoint(
-          "envoy.load_shed_points.http_connection_manager_decode_headers")),
+      accept_new_http_stream_(
+          overload_manager.getLoadShedPoint(Server::LoadShedPointName::get().HcmDecodeHeaders)),
+      hcm_ondata_creating_codec_(
+          overload_manager.getLoadShedPoint(Server::LoadShedPointName::get().HcmCodecCreation)),
       overload_stop_accepting_requests_ref_(
           overload_state_.getState(Server::OverloadActionNames::get().StopAcceptingRequests)),
       overload_disable_keepalive_ref_(
@@ -129,6 +134,9 @@ ConnectionManagerImpl::ConnectionManagerImpl(ConnectionManagerConfig& config,
       trace, accept_new_http_stream_ == nullptr,
       "LoadShedPoint envoy.load_shed_points.http_connection_manager_decode_headers is not "
       "found. Is it configured?");
+  ENVOY_LOG_ONCE_IF(trace, hcm_ondata_creating_codec_ == nullptr,
+                    "LoadShedPoint envoy.load_shed_points.hcm_ondata_creating_codec is not found. "
+                    "Is it configured?");
 }
 
 const ResponseHeaderMap& ConnectionManagerImpl::continueHeader() {
@@ -213,7 +221,8 @@ ConnectionManagerImpl::~ConnectionManagerImpl() {
 
 void ConnectionManagerImpl::checkForDeferredClose(bool skip_delay_close) {
   Network::ConnectionCloseType close = Network::ConnectionCloseType::FlushWriteAndDelay;
-  if (skip_delay_close) {
+  if (runtime_.snapshot().getBoolean(ConnectionManagerImpl::OptionallyDelayClose, true) &&
+      skip_delay_close) {
     close = Network::ConnectionCloseType::FlushWrite;
   }
   if (drain_state_ == DrainState::Closing && streams_.empty() && !codec_->wantsToWrite()) {
@@ -250,13 +259,13 @@ void ConnectionManagerImpl::doEndStream(ActiveStream& stream, bool check_for_def
     // communicated via CONNECT_ERROR
     if (requestWasConnect(stream.request_headers_, codec_->protocol()) &&
         (stream.filter_manager_.streamInfo().hasResponseFlag(
-             StreamInfo::ResponseFlag::UpstreamConnectionFailure) ||
+             StreamInfo::CoreResponseFlag::UpstreamConnectionFailure) ||
          stream.filter_manager_.streamInfo().hasResponseFlag(
-             StreamInfo::ResponseFlag::UpstreamConnectionTermination))) {
+             StreamInfo::CoreResponseFlag::UpstreamConnectionTermination))) {
       stream.response_encoder_->getStream().resetStream(StreamResetReason::ConnectError);
     } else {
       if (stream.filter_manager_.streamInfo().hasResponseFlag(
-              StreamInfo::ResponseFlag::UpstreamProtocolError)) {
+              StreamInfo::CoreResponseFlag::UpstreamProtocolError)) {
         stream.response_encoder_->getStream().resetStream(StreamResetReason::ProtocolError);
       } else {
         stream.response_encoder_->getStream().resetStream(StreamResetReason::LocalReset);
@@ -314,19 +323,17 @@ void ConnectionManagerImpl::doDeferredStreamDestroy(ActiveStream& stream) {
     stream.access_log_flush_timer_ = nullptr;
   }
 
-  if (stream.expand_agnostic_stream_lifetime_) {
-    // Only destroy the active stream if the underlying codec has notified us of
-    // completion or we've internal redirect the stream.
-    if (!stream.canDestroyStream()) {
-      // Track that this stream is not expecting any additional calls apart from
-      // codec notification.
-      stream.state_.is_zombie_stream_ = true;
-      return;
-    }
+  // Only destroy the active stream if the underlying codec has notified us of
+  // completion or we've internal redirect the stream.
+  if (!stream.canDestroyStream()) {
+    // Track that this stream is not expecting any additional calls apart from
+    // codec notification.
+    stream.state_.is_zombie_stream_ = true;
+    return;
+  }
 
-    if (stream.response_encoder_ != nullptr) {
-      stream.response_encoder_->getStream().registerCodecEventCallbacks(nullptr);
-    }
+  if (stream.response_encoder_ != nullptr) {
+    stream.response_encoder_->getStream().registerCodecEventCallbacks(nullptr);
   }
 
   stream.completeRequest();
@@ -421,9 +428,7 @@ RequestDecoder& ConnectionManagerImpl::newStream(ResponseEncoder& response_encod
   new_stream->state_.is_internally_created_ = is_internally_created;
   new_stream->response_encoder_ = &response_encoder;
   new_stream->response_encoder_->getStream().addCallbacks(*new_stream);
-  if (new_stream->expand_agnostic_stream_lifetime_) {
-    new_stream->response_encoder_->getStream().registerCodecEventCallbacks(new_stream.get());
-  }
+  new_stream->response_encoder_->getStream().registerCodecEventCallbacks(new_stream.get());
   new_stream->response_encoder_->getStream().setFlushTimeout(new_stream->idle_timeout_ms_);
   new_stream->streamInfo().setDownstreamBytesMeter(response_encoder.getStream().bytesMeter());
   // If the network connection is backed up, the stream should be made aware of it on creation.
@@ -435,7 +440,7 @@ RequestDecoder& ConnectionManagerImpl::newStream(ResponseEncoder& response_encod
 }
 
 void ConnectionManagerImpl::handleCodecErrorImpl(absl::string_view error, absl::string_view details,
-                                                 StreamInfo::ResponseFlag response_flag) {
+                                                 StreamInfo::CoreResponseFlag response_flag) {
   ENVOY_CONN_LOG(debug, "dispatch error: {}", read_callbacks_->connection(), error);
   read_callbacks_->connection().streamInfo().setResponseFlag(response_flag);
 
@@ -446,13 +451,13 @@ void ConnectionManagerImpl::handleCodecErrorImpl(absl::string_view error, absl::
 
 void ConnectionManagerImpl::handleCodecError(absl::string_view error) {
   handleCodecErrorImpl(error, absl::StrCat("codec_error:", StringUtil::replaceAllEmptySpace(error)),
-                       StreamInfo::ResponseFlag::DownstreamProtocolError);
+                       StreamInfo::CoreResponseFlag::DownstreamProtocolError);
 }
 
 void ConnectionManagerImpl::handleCodecOverloadError(absl::string_view error) {
   handleCodecErrorImpl(error,
                        absl::StrCat("overload_error:", StringUtil::replaceAllEmptySpace(error)),
-                       StreamInfo::ResponseFlag::OverloadManager);
+                       StreamInfo::CoreResponseFlag::OverloadManager);
 }
 
 void ConnectionManagerImpl::createCodec(Buffer::Instance& data) {
@@ -479,6 +484,12 @@ void ConnectionManagerImpl::createCodec(Buffer::Instance& data) {
 Network::FilterStatus ConnectionManagerImpl::onData(Buffer::Instance& data, bool) {
   requests_during_dispatch_count_ = 0;
   if (!codec_) {
+    // Close connections if Envoy is under pressure, typically memory, before creating codec.
+    if (hcm_ondata_creating_codec_ != nullptr && hcm_ondata_creating_codec_->shouldShedLoad()) {
+      stats_.named_.downstream_rq_overload_close_.inc();
+      handleCodecOverloadError("onData codec creation overload");
+      return Network::FilterStatus::StopIteration;
+    }
     // Http3 codec should have been instantiated by now.
     createCodec(data);
   }
@@ -542,8 +553,8 @@ Network::FilterStatus ConnectionManagerImpl::onNewConnection() {
   return Network::FilterStatus::StopIteration;
 }
 
-void ConnectionManagerImpl::resetAllStreams(absl::optional<StreamInfo::ResponseFlag> response_flag,
-                                            absl::string_view details) {
+void ConnectionManagerImpl::resetAllStreams(
+    absl::optional<StreamInfo::CoreResponseFlag> response_flag, absl::string_view details) {
   while (!streams_.empty()) {
     // Mimic a downstream reset in this case. We must also remove callbacks here. Though we are
     // about to close the connection and will disable further reads, it is possible that flushing
@@ -598,13 +609,14 @@ void ConnectionManagerImpl::onEvent(Network::ConnectionEvent event) {
     // NOTE: In the case where a local close comes from outside the filter, this will cause any
     // stream closures to increment remote close stats. We should do better here in the future,
     // via the pre-close callback mentioned above.
-    doConnectionClose(absl::nullopt, absl::nullopt, details);
+    doConnectionClose(absl::nullopt, StreamInfo::CoreResponseFlag::DownstreamConnectionTermination,
+                      details);
   }
 }
 
 void ConnectionManagerImpl::doConnectionClose(
     absl::optional<Network::ConnectionCloseType> close_type,
-    absl::optional<StreamInfo::ResponseFlag> response_flag, absl::string_view details) {
+    absl::optional<StreamInfo::CoreResponseFlag> response_flag, absl::string_view details) {
   if (connection_idle_timer_) {
     connection_idle_timer_->disableTimer();
     connection_idle_timer_.reset();
@@ -723,7 +735,7 @@ void ConnectionManagerImpl::onConnectionDurationTimeout() {
   if (!codec_) {
     // Attempt to write out buffered data one last time and issue a local close if successful.
     doConnectionClose(Network::ConnectionCloseType::FlushWrite,
-                      StreamInfo::ResponseFlag::DurationTimeout,
+                      StreamInfo::CoreResponseFlag::DurationTimeout,
                       StreamInfo::ResponseCodeDetails::get().DurationTimeout);
   } else if (drain_state_ == DrainState::NotDraining) {
     startDrainSequence();
@@ -845,8 +857,6 @@ ConnectionManagerImpl::ActiveStream::ActiveStream(ConnectionManagerImpl& connect
                       StreamInfo::FilterState::LifeSpan::Connection),
       request_response_timespan_(new Stats::HistogramCompletableTimespanImpl(
           connection_manager_.stats_.named_.downstream_rq_time_, connection_manager_.timeSource())),
-      expand_agnostic_stream_lifetime_(
-          Runtime::runtimeFeatureEnabled(Runtime::expand_agnostic_stream_lifetime)),
       header_validator_(
           connection_manager.config_.makeHeaderValidator(connection_manager.codec_->protocol())) {
   ASSERT(!connection_manager.config_.isRoutable() ||
@@ -949,12 +959,6 @@ ConnectionManagerImpl::ActiveStream::ActiveStream(ConnectionManagerImpl& connect
 void ConnectionManagerImpl::ActiveStream::completeRequest() {
   filter_manager_.streamInfo().onRequestComplete();
 
-  if (connection_manager_.remote_close_) {
-    filter_manager_.streamInfo().setResponseCodeDetails(
-        StreamInfo::ResponseCodeDetails::get().DownstreamRemoteDisconnect);
-    filter_manager_.streamInfo().setResponseFlag(
-        StreamInfo::ResponseFlag::DownstreamConnectionTermination);
-  }
   connection_manager_.stats_.named_.downstream_rq_active_.dec();
   if (filter_manager_.streamInfo().healthCheck()) {
     connection_manager_.config_.tracingStats().health_check_.inc();
@@ -982,7 +986,7 @@ void ConnectionManagerImpl::ActiveStream::resetIdleTimer() {
 void ConnectionManagerImpl::ActiveStream::onIdleTimeout() {
   connection_manager_.stats_.named_.downstream_rq_idle_timeout_.inc();
 
-  filter_manager_.streamInfo().setResponseFlag(StreamInfo::ResponseFlag::StreamIdleTimeout);
+  filter_manager_.streamInfo().setResponseFlag(StreamInfo::CoreResponseFlag::StreamIdleTimeout);
   sendLocalReply(Http::Utility::maybeRequestTimeoutCode(filter_manager_.remoteDecodeComplete()),
                  "stream timeout", nullptr, absl::nullopt,
                  StreamInfo::ResponseCodeDetails::get().StreamIdleTimeout);
@@ -1192,6 +1196,12 @@ void ConnectionManagerImpl::ActiveStream::decodeHeaders(RequestHeaderMapSharedPt
                                                         bool end_stream) {
   ENVOY_STREAM_LOG(debug, "request headers complete (end_stream={}):\n{}", *this, end_stream,
                    *headers);
+  // We only want to record this when reading the headers the first time, not when recreating
+  // a stream.
+  if (!filter_manager_.remoteDecodeComplete()) {
+    filter_manager_.streamInfo().downstreamTiming().onLastDownstreamHeaderRxByteReceived(
+        connection_manager_.dispatcher_->timeSource());
+  }
   ScopeTrackerScopeState scope(this,
                                connection_manager_.read_callbacks_->connection().dispatcher());
   request_headers_ = std::move(headers);
@@ -1253,8 +1263,15 @@ void ConnectionManagerImpl::ActiveStream::decodeHeaders(RequestHeaderMapSharedPt
     // overload it is more important to avoid unnecessary allocation than to create the filters.
     filter_manager_.skipFilterChainCreation();
     connection_manager_.stats_.named_.downstream_rq_overload_close_.inc();
-    sendLocalReply(Http::Code::ServiceUnavailable, "envoy overloaded", nullptr, absl::nullopt,
-                   StreamInfo::ResponseCodeDetails::get().Overload);
+    sendLocalReply(
+        Http::Code::ServiceUnavailable, "envoy overloaded",
+        [this](Http::ResponseHeaderMap& headers) {
+          if (connection_manager_.config_.appendLocalOverload()) {
+            headers.addReference(Http::Headers::get().EnvoyLocalOverloaded,
+                                 Http::Headers::get().EnvoyOverloadedValues.True);
+          }
+        },
+        absl::nullopt, StreamInfo::ResponseCodeDetails::get().Overload);
     return;
   }
 
@@ -1438,8 +1455,9 @@ void ConnectionManagerImpl::ActiveStream::traceRequest() {
   ConnectionManagerImpl::chargeTracingStats(tracing_decision.reason,
                                             connection_manager_.config_.tracingStats());
 
+  Tracing::HttpTraceContext trace_context(*request_headers_);
   active_span_ = connection_manager_.tracer().startSpan(
-      *this, *request_headers_, filter_manager_.streamInfo(), tracing_decision);
+      *this, trace_context, filter_manager_.streamInfo(), tracing_decision);
 
   if (!active_span_) {
     return;
@@ -1524,10 +1542,14 @@ void ConnectionManagerImpl::ActiveStream::decodeTrailers(RequestTrailerMapPtr&& 
 
 void ConnectionManagerImpl::ActiveStream::decodeMetadata(MetadataMapPtr&& metadata_map) {
   resetIdleTimer();
-  // After going through filters, the ownership of metadata_map will be passed to terminal filter.
-  // The terminal filter may encode metadata_map to the next hop immediately or store metadata_map
-  // and encode later when connection pool is ready.
-  filter_manager_.decodeMetadata(*metadata_map);
+  if (!state_.deferred_to_next_io_iteration_) {
+    // After going through filters, the ownership of metadata_map will be passed to terminal filter.
+    // The terminal filter may encode metadata_map to the next hop immediately or store metadata_map
+    // and encode later when connection pool is ready.
+    filter_manager_.decodeMetadata(*metadata_map);
+  } else {
+    deferred_metadata_.push(std::move(metadata_map));
+  }
 }
 
 void ConnectionManagerImpl::ActiveStream::disarmRequestTimeout() {
@@ -1726,7 +1748,7 @@ void ConnectionManagerImpl::ActiveStream::encode1xxHeaders(ResponseHeaderMap& re
   // Count both the 1xx and follow-up response code in stats.
   chargeStats(response_headers);
 
-  ENVOY_STREAM_LOG(debug, "encoding 100 continue headers via codec:\n{}", *this, response_headers);
+  ENVOY_STREAM_LOG(debug, "encoding 1xx continue headers via codec:\n{}", *this, response_headers);
 
   // Now actually encode via the codec.
   response_encoder_->encode1xxHeaders(response_headers);
@@ -1811,12 +1833,9 @@ void ConnectionManagerImpl::ActiveStream::encodeHeaders(ResponseHeaderMap& heade
     state_.is_tunneling_ = true;
   }
 
-  if (Runtime::runtimeFeatureEnabled(
-          "envoy.reloadable_features.prohibit_route_refresh_after_response_headers_sent")) {
-    // Block route cache if the response headers is received and processed. Because after this
-    // point, the cached route should never be updated or refreshed.
-    blockRouteCache();
-  }
+  // Block route cache if the response headers is received and processed. Because after this
+  // point, the cached route should never be updated or refreshed.
+  blockRouteCache();
 
   if (connection_manager_.drain_state_ != DrainState::NotDraining &&
       connection_manager_.codec_->protocol() < Protocol::Http2) {
@@ -1936,16 +1955,23 @@ void ConnectionManagerImpl::ActiveStream::onResetStream(StreamResetReason reset_
   // If the codec sets its responseDetails() for a reason other than peer reset, set a
   // DownstreamProtocolError. Either way, propagate details.
   if (!encoder_details.empty() && reset_reason == StreamResetReason::LocalReset) {
-    filter_manager_.streamInfo().setResponseFlag(StreamInfo::ResponseFlag::DownstreamProtocolError);
+    filter_manager_.streamInfo().setResponseFlag(
+        StreamInfo::CoreResponseFlag::DownstreamProtocolError);
   }
   if (!encoder_details.empty()) {
+    if (reset_reason == StreamResetReason::ConnectError ||
+        reset_reason == StreamResetReason::RemoteReset ||
+        reset_reason == StreamResetReason::RemoteRefusedStreamReset) {
+      filter_manager_.streamInfo().setResponseFlag(
+          StreamInfo::CoreResponseFlag::DownstreamRemoteReset);
+    }
     filter_manager_.streamInfo().setResponseCodeDetails(encoder_details);
   }
 
   // Check if we're in the overload manager reset case.
   // encoder_details should be empty in this case as we don't have a codec error.
   if (encoder_details.empty() && reset_reason == StreamResetReason::OverloadManager) {
-    filter_manager_.streamInfo().setResponseFlag(StreamInfo::ResponseFlag::OverloadManager);
+    filter_manager_.streamInfo().setResponseFlag(StreamInfo::CoreResponseFlag::OverloadManager);
     filter_manager_.streamInfo().setResponseCodeDetails(
         StreamInfo::ResponseCodeDetails::get().Overload);
   }
@@ -2238,11 +2264,17 @@ bool ConnectionManagerImpl::ActiveStream::onDeferredRequestProcessing() {
     return false;
   }
   state_.deferred_to_next_io_iteration_ = false;
-  bool end_stream =
-      state_.deferred_end_stream_ && deferred_data_ == nullptr && request_trailers_ == nullptr;
+  bool end_stream = state_.deferred_end_stream_ && deferred_data_ == nullptr &&
+                    request_trailers_ == nullptr && deferred_metadata_.empty();
   filter_manager_.decodeHeaders(*request_headers_, end_stream);
   if (end_stream) {
     return true;
+  }
+  // Send metadata before data, as data may have an associated end_stream.
+  while (!deferred_metadata_.empty()) {
+    MetadataMapPtr& metadata = deferred_metadata_.front();
+    filter_manager_.decodeMetadata(*metadata);
+    deferred_metadata_.pop();
   }
   // Filter manager will return early from decodeData and decodeTrailers if
   // request has completed.

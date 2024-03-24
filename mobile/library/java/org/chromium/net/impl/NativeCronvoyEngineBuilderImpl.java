@@ -4,6 +4,7 @@ import static io.envoyproxy.envoymobile.engine.EnvoyConfiguration.TrustChainVeri
 
 import android.content.Context;
 import androidx.annotation.VisibleForTesting;
+import com.google.protobuf.Struct;
 import io.envoyproxy.envoymobile.engine.AndroidEngineImpl;
 import io.envoyproxy.envoymobile.engine.AndroidJniLibrary;
 import io.envoyproxy.envoymobile.engine.AndroidNetworkMonitor;
@@ -32,38 +33,36 @@ public class NativeCronvoyEngineBuilderImpl extends CronvoyEngineBuilderImpl {
   // TODO(refactor) move unshared variables into their specific methods.
   private final List<EnvoyNativeFilterConfig> nativeFilterChain = new ArrayList<>();
   private final EnvoyEventTracker mEnvoyEventTracker = null;
-  private String mGrpcStatsDomain = null;
-  private int mConnectTimeoutSeconds = 30;
-  private int mDnsRefreshSeconds = 60;
-  private int mDnsFailureRefreshSecondsBase = 2;
-  private int mDnsFailureRefreshSecondsMax = 10;
-  private int mDnsQueryTimeoutSeconds = 25;
-  private int mDnsMinRefreshSeconds = 60;
-  private List<String> mDnsPreresolveHostnames = Collections.emptyList();
-  private boolean mEnableDNSCache = false;
-  private int mDnsCacheSaveIntervalSeconds = 1;
-  private List<String> mDnsFallbackNameservers = Collections.emptyList();
-  private boolean mEnableDnsFilterUnroutableFamilies = true;
-  private boolean mDnsUseSystemResolver = true;
+  private final int mConnectTimeoutSeconds = 30;
+  private final int mDnsRefreshSeconds = 60;
+  private final int mDnsFailureRefreshSecondsBase = 2;
+  private final int mDnsFailureRefreshSecondsMax = 10;
+  private final int mDnsQueryTimeoutSeconds = 25;
+  private final int mDnsMinRefreshSeconds = 60;
+  private final List<String> mDnsPreresolveHostnames = Collections.emptyList();
+  private final boolean mEnableDNSCache = false;
+  private final int mDnsCacheSaveIntervalSeconds = 1;
+  private final List<String> mDnsFallbackNameservers = Collections.emptyList();
+  private final boolean mEnableDnsFilterUnroutableFamilies = true;
+  private final boolean mDnsUseSystemResolver = true;
   private boolean mEnableDrainPostDnsRefresh = false;
-  private boolean mEnableGzipDecompression = true;
-  private boolean mEnableSocketTag = true;
-  private boolean mEnableInterfaceBinding = false;
-  private boolean mEnableProxying = false;
-  private int mH2ConnectionKeepaliveIdleIntervalMilliseconds = 1;
-  private int mH2ConnectionKeepaliveTimeoutSeconds = 10;
-  private int mMaxConnectionsPerHost = 7;
-  private int mStatsFlushSeconds = 60;
-  private int mStreamIdleTimeoutSeconds = 15;
-  private int mPerTryIdleTimeoutSeconds = 15;
-  private String mAppVersion = "unspecified";
-  private String mAppId = "unspecified";
+  private final boolean mEnableGzipDecompression = true;
+  private final boolean mEnableSocketTag = true;
+  private final boolean mEnableInterfaceBinding = false;
+  private final boolean mEnableProxying = false;
+  private final int mH2ConnectionKeepaliveIdleIntervalMilliseconds = 1;
+  private final int mH2ConnectionKeepaliveTimeoutSeconds = 10;
+  private final int mMaxConnectionsPerHost = 7;
+  private final int mStreamIdleTimeoutSeconds = 15;
+  private final int mPerTryIdleTimeoutSeconds = 15;
+  private final String mAppVersion = "unspecified";
+  private final String mAppId = "unspecified";
   private TrustChainVerification mTrustChainVerification = VERIFY_TRUST_CHAIN;
-  private boolean mEnablePlatformCertificatesValidation = true;
-  private String mNodeId = "";
-  private String mNodeRegion = "";
-  private String mNodeZone = "";
-  private String mNodeSubZone = "";
+  private final boolean mEnablePlatformCertificatesValidation = true;
+  private final String mNodeId = "";
+  private final String mNodeRegion = "";
+  private final String mNodeZone = "";
+  private final String mNodeSubZone = "";
 
   /**
    * Builder for Native Cronet Engine. Default config enables SPDY, disables QUIC and HTTP cache.
@@ -71,6 +70,17 @@ public class NativeCronvoyEngineBuilderImpl extends CronvoyEngineBuilderImpl {
    * @param context Android {@link Context} for engine to use.
    */
   public NativeCronvoyEngineBuilderImpl(Context context) { super(context); }
+
+  /**
+   * Enable draining of the connections after a DNS refresh changes the host address mapping.
+   * The default behavior is to not enable draining post DNS refresh.
+   *
+   * @param enable If true, enable drain post DNS refresh; otherwise, don't.
+   */
+  public NativeCronvoyEngineBuilderImpl setEnableDrainPostDnsRefresh(boolean enable) {
+    mEnableDrainPostDnsRefresh = enable;
+    return this;
+  }
 
   /**
    * Indicates to skip the TLS certificate verification.
@@ -118,24 +128,24 @@ public class NativeCronvoyEngineBuilderImpl extends CronvoyEngineBuilderImpl {
     List<EnvoyHTTPFilterFactory> platformFilterChain = Collections.emptyList();
     Map<String, EnvoyStringAccessor> stringAccessors = Collections.emptyMap();
     Map<String, EnvoyKeyValueStore> keyValueStores = Collections.emptyMap();
-    List<String> statSinks = Collections.emptyList();
     Map<String, Boolean> runtimeGuards = Collections.emptyMap();
 
     return new EnvoyConfiguration(
-        mGrpcStatsDomain, mConnectTimeoutSeconds, mDnsRefreshSeconds, mDnsFailureRefreshSecondsBase,
+        mConnectTimeoutSeconds, mDnsRefreshSeconds, mDnsFailureRefreshSecondsBase,
         mDnsFailureRefreshSecondsMax, mDnsQueryTimeoutSeconds, mDnsMinRefreshSeconds,
         mDnsPreresolveHostnames, mEnableDNSCache, mDnsCacheSaveIntervalSeconds,
         mEnableDrainPostDnsRefresh, quicEnabled(), quicConnectionOptions(),
-        quicClientConnectionOptions(), quicHints(), mEnableGzipDecompression, brotliEnabled(),
-        mEnableSocketTag, mEnableInterfaceBinding, mH2ConnectionKeepaliveIdleIntervalMilliseconds,
-        mH2ConnectionKeepaliveTimeoutSeconds, mMaxConnectionsPerHost, mStatsFlushSeconds,
-        mStreamIdleTimeoutSeconds, mPerTryIdleTimeoutSeconds, mAppVersion, mAppId,
-        mTrustChainVerification, nativeFilterChain, platformFilterChain, stringAccessors,
-        keyValueStores, statSinks, runtimeGuards, mEnablePlatformCertificatesValidation,
+        quicClientConnectionOptions(), quicHints(), quicCanonicalSuffixes(),
+        mEnableGzipDecompression, brotliEnabled(), portMigrationEnabled(), mEnableSocketTag,
+        mEnableInterfaceBinding, mH2ConnectionKeepaliveIdleIntervalMilliseconds,
+        mH2ConnectionKeepaliveTimeoutSeconds, mMaxConnectionsPerHost, mStreamIdleTimeoutSeconds,
+        mPerTryIdleTimeoutSeconds, mAppVersion, mAppId, mTrustChainVerification, nativeFilterChain,
+        platformFilterChain, stringAccessors, keyValueStores, runtimeGuards,
+        mEnablePlatformCertificatesValidation,
         /*rtdsResourceName=*/"", /*rtdsTimeoutSeconds=*/0, /*xdsAddress=*/"",
-        /*xdsPort=*/0, /*xdsAuthenticationHeader=*/"", /*xdsAuthenticationToken=*/"",
-        /*xdsJwtToken=*/"", /*xdsJwtTokenLifetime=*/0, /*xdsSslRootCerts=*/"",
-        /*xdsSni=*/"", mNodeId, mNodeRegion, mNodeZone, mNodeSubZone, /*cdsResourcesLocator=*/"",
-        /*cdsTimeoutSeconds=*/0, /*enableCds=*/false);
+        /*xdsPort=*/0, /*xdsGrpcInitialMetadata=*/Collections.emptyMap(),
+        /*xdsSslRootCerts=*/"", mNodeId, mNodeRegion, mNodeZone, mNodeSubZone,
+        Struct.getDefaultInstance(), /*cdsResourcesLocator=*/"", /*cdsTimeoutSeconds=*/0,
+        /*enableCds=*/false);
   }
 }

@@ -1,29 +1,17 @@
+load("@envoy//bazel:envoy_build_system.bzl", "envoy_mobile_package")
 load("@envoy_mobile//bazel:apple.bzl", "envoy_mobile_swift_test")
 
 licenses(["notice"])  # Apache 2
 
-# TODO(jpsim): Fix remote execution for all the tests in this file.
-
-envoy_mobile_swift_test(
-    name = "test",
-    srcs = [
-        "StatFlushIntegrationTest.swift",
-    ],
-    tags = [
-        "no-remote-exec",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":test_extensions",
-        "//library/objective-c:envoy_engine_objc_lib",
-    ],
-)
+envoy_mobile_package()
 
 envoy_mobile_swift_test(
     name = "end_to_end_networking_test",
     srcs = [
         "EndToEndNetworkingTest.swift",
     ],
+    # The test starts an Envoy server, which binds to a local socket. Binding to a local socket is
+    # not permitted on remote execution hosts, so we have to add the `no-remote-exec` tag.
     tags = [
         "no-remote-exec",
     ],
@@ -40,9 +28,7 @@ envoy_mobile_swift_test(
     srcs = [
         "CancelStreamTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -55,9 +41,7 @@ envoy_mobile_swift_test(
     srcs = [
         "EngineApiTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -70,9 +54,7 @@ envoy_mobile_swift_test(
     srcs = [
         "FilterResetIdleTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -85,9 +67,7 @@ envoy_mobile_swift_test(
     srcs = [
         "GRPCReceiveErrorTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -100,6 +80,8 @@ envoy_mobile_swift_test(
     srcs = [
         "IdleTimeoutTest.swift",
     ],
+    # The test starts an Envoy server, which binds to a local socket. Binding to a local socket is
+    # not permitted on remote execution hosts, so we have to add the `no-remote-exec` tag.
     tags = [
         "no-remote-exec",
     ],
@@ -107,6 +89,7 @@ envoy_mobile_swift_test(
     deps = [
         ":test_extensions",
         "//library/objective-c:envoy_engine_objc_lib",
+        "//test/objective-c:envoy_test_server",
     ],
 )
 
@@ -115,9 +98,7 @@ envoy_mobile_swift_test(
     srcs = [
         "KeyValueStoreTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -130,9 +111,7 @@ envoy_mobile_swift_test(
     srcs = [
         "ReceiveDataTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -145,9 +124,7 @@ envoy_mobile_swift_test(
     srcs = [
         "ReceiveErrorTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -160,9 +137,7 @@ envoy_mobile_swift_test(
     srcs = [
         "ResetConnectivityStateTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -175,9 +150,7 @@ envoy_mobile_swift_test(
     srcs = [
         "SendDataTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -190,9 +163,7 @@ envoy_mobile_swift_test(
     srcs = [
         "SendHeadersTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -205,9 +176,7 @@ envoy_mobile_swift_test(
     srcs = [
         "SendTrailersTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -220,9 +189,7 @@ envoy_mobile_swift_test(
     srcs = [
         "SetEventTrackerTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -235,9 +202,7 @@ envoy_mobile_swift_test(
     srcs = [
         "SetEventTrackerTestNoTracker.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -250,9 +215,7 @@ envoy_mobile_swift_test(
     srcs = [
         "SetLoggerTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -265,9 +228,7 @@ envoy_mobile_swift_test(
     srcs = [
         "CancelGRPCStreamTest.swift",
     ],
-    tags = [
-        "no-remote-exec",
-    ],
+    tags = ["no-remote-exec"],  # TODO(32551): Re-enable remote exec
     visibility = ["//visibility:public"],
     deps = [
         ":test_extensions",
@@ -281,6 +242,7 @@ objc_library(
         "TestExtensions.h",
     ],
     module_name = "TestExtensions",
+    visibility = ["//visibility:public"],
     deps = [
         "@envoy_build_config//:test_extensions_no_autoregister",
     ],

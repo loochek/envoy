@@ -68,7 +68,7 @@ envoy_cc_library(
     deps = [
         "//envoy/config:subscription_interface",
         "//source/common/protobuf:utility_lib",
-        "@com_github_cncf_udpa//xds/core/v3:pkg_cc_proto",
+        "@com_github_cncf_xds//xds/core/v3:pkg_cc_proto",
         "@envoy_api//envoy/service/discovery/v3:pkg_cc_proto",
     ],
 )
@@ -206,7 +206,7 @@ envoy_cc_library(
     hdrs = ["xds_resource.h"],
     deps = [
         "//source/common/http:utility_lib",
-        "@com_github_cncf_udpa//xds/core/v3:pkg_cc_proto",
+        "@com_github_cncf_xds//xds/core/v3:pkg_cc_proto",
     ],
 )
 
@@ -226,22 +226,30 @@ envoy_cc_library(
         "//source/common/common:backoff_lib",
         "//source/common/common:hash_lib",
         "//source/common/common:hex_lib",
-        "//source/common/grpc:common_lib",
         "//source/common/protobuf",
         "//source/common/protobuf:utility_lib",
         "//source/common/runtime:runtime_features_lib",
         "//source/common/singleton:const_singleton",
-        "//source/common/stats:histogram_lib",
-        "//source/common/stats:stats_lib",
-        "//source/common/stats:stats_matcher_lib",
-        "//source/common/stats:tag_producer_lib",
         "//source/common/version:api_version_lib",
-        "@com_github_cncf_udpa//udpa/type/v1:pkg_cc_proto",
-        "@com_github_cncf_udpa//xds/type/v3:pkg_cc_proto",
+        "@com_github_cncf_xds//udpa/type/v1:pkg_cc_proto",
+        "@com_github_cncf_xds//xds/type/v3:pkg_cc_proto",
         "@envoy_api//envoy/config/bootstrap/v3:pkg_cc_proto",
         "@envoy_api//envoy/config/cluster/v3:pkg_cc_proto",
         "@envoy_api//envoy/config/core/v3:pkg_cc_proto",
         "@envoy_api//envoy/config/endpoint/v3:pkg_cc_proto",
+    ],
+)
+
+envoy_cc_library(
+    name = "stats_utility_lib",
+    srcs = ["stats_utility.cc"],
+    hdrs = ["stats_utility.h"],
+    deps = [
+        "//source/common/stats:histogram_lib",
+        "//source/common/stats:stats_lib",
+        "//source/common/stats:stats_matcher_lib",
+        "//source/common/stats:tag_producer_lib",
+        "@envoy_api//envoy/config/bootstrap/v3:pkg_cc_proto",
     ],
 )
 
@@ -287,7 +295,7 @@ envoy_cc_library(
     deps = [
         "//source/common/common:macros",
         "//source/common/protobuf:utility_lib",
-        "@com_github_cncf_udpa//xds/core/v3:pkg_cc_proto",
+        "@com_github_cncf_xds//xds/core/v3:pkg_cc_proto",
         "@envoy_api//envoy/config/core/v3:pkg_cc_proto",
     ],
 )

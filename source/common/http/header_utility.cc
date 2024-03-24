@@ -14,7 +14,10 @@
 
 #include "absl/strings/match.h"
 #include "nghttp2/nghttp2.h"
+
+#ifdef ENVOY_ENABLE_HTTP_DATAGRAMS
 #include "quiche/common/structured_headers.h"
+#endif
 #include "quiche/http2/adapter/header_validator.h"
 
 namespace Envoy {
@@ -42,7 +45,8 @@ using SharedResponseCodeDetails = ConstSingleton<SharedResponseCodeDetailsValues
 //   d.present_match: Match will succeed if the header is present.
 //   f.prefix_match: Match will succeed if header value matches the prefix value specified here.
 //   g.suffix_match: Match will succeed if header value matches the suffix value specified here.
-HeaderUtility::HeaderData::HeaderData(const envoy::config::route::v3::HeaderMatcher& config)
+HeaderUtility::HeaderData::HeaderData(const envoy::config::route::v3::HeaderMatcher& config,
+                                      Server::Configuration::CommonFactoryContext& factory_context)
     : name_(config.name()), invert_match_(config.invert_match()),
       treat_missing_as_empty_(config.treat_missing_header_as_empty()) {
   switch (config.header_match_specifier_case()) {
@@ -77,9 +81,9 @@ HeaderUtility::HeaderData::HeaderData(const envoy::config::route::v3::HeaderMatc
     break;
   case envoy::config::route::v3::HeaderMatcher::HeaderMatchSpecifierCase::kStringMatch:
     header_match_type_ = HeaderMatchType::StringMatch;
-    string_match_ =
-        std::make_unique<Matchers::StringMatcherImpl<envoy::type::matcher::v3::StringMatcher>>(
-            config.string_match());
+    string_match_ = std::make_unique<
+        Matchers::StringMatcherImplWithContext<envoy::type::matcher::v3::StringMatcher>>(
+        config.string_match(), factory_context);
     break;
   case envoy::config::route::v3::HeaderMatcher::HeaderMatchSpecifierCase::
       HEADER_MATCH_SPECIFIER_NOT_SET:
@@ -647,12 +651,12 @@ std::string HeaderUtility::addEncodingToAcceptEncoding(absl::string_view accept_
 }
 
 bool HeaderUtility::isStandardConnectRequest(const Http::RequestHeaderMap& headers) {
-  return headers.method() == Http::Headers::get().MethodValues.Connect &&
+  return headers.getMethodValue() == Http::Headers::get().MethodValues.Connect &&
          headers.getProtocolValue().empty();
 }
 
 bool HeaderUtility::isExtendedH2ConnectRequest(const Http::RequestHeaderMap& headers) {
-  return headers.method() == Http::Headers::get().MethodValues.Connect &&
+  return headers.getMethodValue() == Http::Headers::get().MethodValues.Connect &&
          !headers.getProtocolValue().empty();
 }
 

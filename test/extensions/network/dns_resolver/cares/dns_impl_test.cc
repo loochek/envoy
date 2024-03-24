@@ -19,6 +19,7 @@
 #include "source/common/network/address_impl.h"
 #include "source/common/network/filter_impl.h"
 #include "source/common/network/listen_socket_impl.h"
+#include "source/common/network/tcp_listener_impl.h"
 #include "source/common/network/utility.h"
 #include "source/common/stream_info/stream_info_impl.h"
 #include "source/extensions/network/dns_resolver/cares/dns_impl.h"
@@ -729,8 +730,10 @@ public:
         Network::Test::getCanonicalLoopbackAddress(GetParam()));
     NiceMock<Network::MockListenerConfig> listener_config;
     Server::ThreadLocalOverloadStateOptRef overload_state;
-    listener_ =
-        dispatcher_->createListener(socket_, *server_, runtime_, listener_config, overload_state);
+    listener_ = std::make_unique<Network::TcpListenerImpl>(
+        *dispatcher_, api_->randomGenerator(), runtime_, socket_, *server_,
+        listener_config.bindToPort(), listener_config.ignoreGlobalConnLimit(),
+        listener_config.maxConnectionsToAcceptPerSocketEvent(), overload_state);
     updateDnsResolverOptions();
 
     // Create a resolver options on stack here to emulate what actually happens in envoy bootstrap.
@@ -791,7 +794,7 @@ public:
                                           const absl::optional<std::chrono::seconds> expected_ttl) {
     return resolver_->resolve(
         address, lookup_family,
-        [=](DnsResolver::ResolutionStatus status, std::list<DnsResponse>&& results) -> void {
+        [=, this](DnsResolver::ResolutionStatus status, std::list<DnsResponse>&& results) -> void {
           EXPECT_EQ(expected_status, status);
 
           std::list<std::string> address_as_string_list = getAddressAsStringList(results);
@@ -824,7 +827,7 @@ public:
                                                   const DnsLookupFamily lookup_family) {
     return resolver_->resolve(
         address, lookup_family,
-        [=](DnsResolver::ResolutionStatus status, std::list<DnsResponse>&& results) -> void {
+        [=, this](DnsResolver::ResolutionStatus status, std::list<DnsResponse>&& results) -> void {
           EXPECT_EQ(DnsResolver::ResolutionStatus::Success, status);
           std::list<std::string> address_as_string_list = getAddressAsStringList(results);
           EXPECT_EQ(0, address_as_string_list.size());

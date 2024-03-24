@@ -22,7 +22,7 @@
 #include "quiche/quic/test_tools/quic_session_peer.h"
 #endif
 
-#include "source/extensions/listener_managers/listener_manager/connection_handler_impl.h"
+#include "source/common/listener_manager/connection_handler_impl.h"
 
 #include "test/integration/utility.h"
 #include "test/test_common/network_utility.h"
@@ -189,7 +189,11 @@ void FakeStream::encodeResetStream() {
         return;
       }
     }
-    encoder_.getStream().resetStream(Http::StreamResetReason::LocalReset);
+    if (parent_.type() == Http::CodecType::HTTP1) {
+      parent_.connection().close(Network::ConnectionCloseType::FlushWrite);
+    } else {
+      encoder_.getStream().resetStream(Http::StreamResetReason::LocalReset);
+    }
   });
 }
 
@@ -244,7 +248,7 @@ bool waitForWithDispatcherRun(Event::TestTimeSystem& time_system, absl::Mutex& l
   Event::TestTimeSystem::RealTimeBound bound(timeout);
   while (bound.withinBound()) {
     // Wake up periodically to run the client dispatcher.
-    if (time_system.waitFor(lock, absl::Condition(&condition), 5ms * TSAN_TIMEOUT_FACTOR)) {
+    if (time_system.waitFor(lock, absl::Condition(&condition), 5ms * TIMEOUT_FACTOR)) {
       return true;
     }
 
@@ -575,7 +579,11 @@ void FakeConnectionBase::postToConnectionThread(std::function<void()> cb) {
   ++pending_cbs_;
   dispatcher_.post([this, cb]() {
     cb();
-    --pending_cbs_;
+    {
+      // Snag this lock not because it's needed but so waitForNoPost doesn't stall
+      absl::MutexLock lock(&lock_);
+      --pending_cbs_;
+    }
   });
 }
 
@@ -685,7 +693,7 @@ void FakeUpstream::initializeServer() {
 
   dispatcher_->post([this]() -> void {
     socket_factories_[0]->doFinalPreWorkerInit();
-    handler_->addListener(absl::nullopt, listener_, runtime_);
+    handler_->addListener(absl::nullopt, listener_, runtime_, random_);
     server_initialized_.setReady();
   });
   thread_ = api_->threadFactory().createThread([this]() -> void { threadRoutine(); });
@@ -800,22 +808,22 @@ AssertionResult FakeUpstream::waitForHttpConnection(Event::Dispatcher& client_di
   });
 }
 
-AssertionResult
+absl::StatusOr<int>
 FakeUpstream::waitForHttpConnection(Event::Dispatcher& client_dispatcher,
                                     std::vector<std::unique_ptr<FakeUpstream>>& upstreams,
                                     FakeHttpConnectionPtr& connection, milliseconds timeout) {
   if (upstreams.empty()) {
-    return AssertionFailure() << "No upstreams configured.";
+    return absl::InternalError("No upstreams configured.");
   }
   Event::TestTimeSystem::RealTimeBound bound(timeout);
   while (bound.withinBound()) {
-    for (auto& it : upstreams) {
-      FakeUpstream& upstream = *it;
+    for (size_t i = 0; i < upstreams.size(); ++i) {
+      FakeUpstream& upstream = *upstreams[i];
       {
         absl::MutexLock lock(&upstream.lock_);
         if (!upstream.isInitialized()) {
-          return AssertionFailure()
-                 << "Must initialize the FakeUpstream first by calling initializeServer().";
+          return absl::InternalError(
+              "Must initialize the FakeUpstream first by calling initializeServer().");
         }
         if (!waitForWithDispatcherRun(
                 upstream.time_system_, upstream.lock_,
@@ -827,7 +835,7 @@ FakeUpstream::waitForHttpConnection(Event::Dispatcher& client_dispatcher,
         }
       }
 
-      return upstream.runOnDispatcherThreadAndWait([&]() {
+      EXPECT_TRUE(upstream.runOnDispatcherThreadAndWait([&]() {
         absl::MutexLock lock(&upstream.lock_);
         connection = std::make_unique<FakeHttpConnection>(
             upstream, upstream.consumeConnection(), upstream.http_type_, upstream.timeSystem(),
@@ -835,10 +843,11 @@ FakeUpstream::waitForHttpConnection(Event::Dispatcher& client_dispatcher,
             envoy::config::core::v3::HttpProtocolOptions::ALLOW);
         connection->initialize();
         return AssertionSuccess();
-      });
+      }));
+      return i;
     }
   }
-  return AssertionFailure() << "Timed out waiting for HTTP connection.";
+  return absl::InternalError("Timed out waiting for HTTP connection.");
 }
 
 ABSL_MUST_USE_RESULT
@@ -950,6 +959,11 @@ AssertionResult FakeUpstream::runOnDispatcherThreadAndWait(std::function<Asserti
   RELEASE_ASSERT(done->WaitForNotificationWithTimeout(absl::FromChrono(timeout)),
                  "Timed out waiting for cb to run on dispatcher");
   return *result;
+}
+
+void FakeUpstream::runOnDispatcherThread(std::function<void()> cb) {
+  ASSERT(!dispatcher_->isThreadSafe());
+  dispatcher_->post([&]() { cb(); });
 }
 
 void FakeUpstream::sendUdpDatagram(const std::string& buffer,

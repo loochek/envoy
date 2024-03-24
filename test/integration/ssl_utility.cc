@@ -5,9 +5,9 @@
 #include "source/common/http/utility.h"
 #include "source/common/json/json_loader.h"
 #include "source/common/network/utility.h"
-#include "source/extensions/transport_sockets/tls/context_config_impl.h"
-#include "source/extensions/transport_sockets/tls/context_manager_impl.h"
-#include "source/extensions/transport_sockets/tls/ssl_socket.h"
+#include "source/common/tls/context_config_impl.h"
+#include "source/common/tls/context_manager_impl.h"
+#include "source/common/tls/ssl_socket.h"
 
 #include "test/config/utility.h"
 #include "test/integration/server.h"
@@ -37,8 +37,8 @@ void initializeUpstreamTlsContextConfig(
     chain = rundir + "/test/config/integration/certs/client_ecdsacert.pem";
     key = rundir + "/test/config/integration/certs/client_ecdsakey.pem";
   } else if (options.use_expired_spiffe_cert_) {
-    chain = rundir + "/test/extensions/transport_sockets/tls/test_data/expired_spiffe_san_cert.pem";
-    key = rundir + "/test/extensions/transport_sockets/tls/test_data/expired_spiffe_san_key.pem";
+    chain = rundir + "/test/common/tls/test_data/expired_spiffe_san_cert.pem";
+    key = rundir + "/test/common/tls/test_data/expired_spiffe_san_key.pem";
   } else if (options.client_with_intermediate_cert_) {
     chain = rundir + "/test/config/integration/certs/client2_chain.pem";
     key = rundir + "/test/config/integration/certs/client2key.pem";
@@ -85,8 +85,8 @@ void initializeUpstreamTlsContextConfig(
     tls_context.set_sni(options.sni_);
   }
   if (options.custom_validator_config_) {
-    common_context->mutable_validation_context()->set_allocated_custom_validator_config(
-        options.custom_validator_config_);
+    *common_context->mutable_validation_context()->mutable_custom_validator_config() =
+        *options.custom_validator_config_;
   }
 
   common_context->mutable_tls_params()->set_tls_minimum_protocol_version(options.tls_version_);
@@ -112,7 +112,7 @@ createClientSslTransportSocketFactory(const ClientSslTransportOptions& options,
 Network::DownstreamTransportSocketFactoryPtr
 createUpstreamSslContext(ContextManager& context_manager, Api::Api& api, bool use_http3) {
   envoy::extensions::transport_sockets::tls::v3::DownstreamTlsContext tls_context;
-  ConfigHelper::initializeTls({}, *tls_context.mutable_common_tls_context());
+  ConfigHelper::initializeTls({}, *tls_context.mutable_common_tls_context(), use_http3);
 
   NiceMock<Server::Configuration::MockTransportSocketFactoryContext> mock_factory_ctx;
   ON_CALL(mock_factory_ctx.server_context_, api()).WillByDefault(ReturnRef(api));
@@ -127,6 +127,9 @@ createUpstreamSslContext(ContextManager& context_manager, Api::Api& api, bool us
   }
   envoy::extensions::transport_sockets::quic::v3::QuicDownstreamTransport quic_config;
   quic_config.mutable_downstream_tls_context()->MergeFrom(tls_context);
+  ON_CALL(mock_factory_ctx, statsScope())
+      .WillByDefault(ReturnRef(*upstream_stats_store->rootScope()));
+  ON_CALL(mock_factory_ctx, sslContextManager()).WillByDefault(ReturnRef(context_manager));
 
   std::vector<std::string> server_names;
   auto& config_factory = Config::Utility::getAndCheckFactoryByName<

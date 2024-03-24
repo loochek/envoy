@@ -26,7 +26,7 @@
 
 #ifdef ENVOY_ENABLE_QUIC
 #include "source/common/quic/client_connection_factory_impl.h"
-#include "source/common/quic/quic_transport_socket_factory.h"
+#include "source/common/quic/quic_client_transport_socket_factory.h"
 #include "quiche/quic/core/deterministic_connection_id_generator.h"
 #endif
 
@@ -142,11 +142,13 @@ private:
 Network::UpstreamTransportSocketFactoryPtr
 IntegrationUtil::createQuicUpstreamTransportSocketFactory(Api::Api& api, Stats::Store& store,
                                                           Ssl::ContextManager& context_manager,
+                                                          ThreadLocal::Instance& threadlocal,
                                                           const std::string& san_to_match) {
   NiceMock<Server::Configuration::MockTransportSocketFactoryContext> context;
   ON_CALL(context.server_context_, api()).WillByDefault(testing::ReturnRef(api));
   ON_CALL(context, statsScope()).WillByDefault(testing::ReturnRef(*store.rootScope()));
   ON_CALL(context, sslContextManager()).WillByDefault(testing::ReturnRef(context_manager));
+  ON_CALL(context.server_context_, threadLocal()).WillByDefault(testing::ReturnRef(threadlocal));
   envoy::extensions::transport_sockets::quic::v3::QuicUpstreamTransport
       quic_transport_socket_config;
   auto* tls_context = quic_transport_socket_config.mutable_upstream_tls_context();
@@ -236,9 +238,11 @@ IntegrationUtil::makeSingleRequest(const Network::Address::InstanceConstSharedPt
   }
 
 #ifdef ENVOY_ENABLE_QUIC
-  Extensions::TransportSockets::Tls::ContextManagerImpl manager(time_system);
+  testing::NiceMock<ThreadLocal::MockInstance> threadlocal;
+  NiceMock<Server::Configuration::MockServerFactoryContext> server_factory_context;
+  Extensions::TransportSockets::Tls::ContextManagerImpl manager(server_factory_context);
   Network::UpstreamTransportSocketFactoryPtr transport_socket_factory =
-      createQuicUpstreamTransportSocketFactory(api, mock_stats_store, manager,
+      createQuicUpstreamTransportSocketFactory(api, mock_stats_store, manager, threadlocal,
                                                "spiffe://lyft.com/backend-team");
   auto& quic_transport_socket_factory =
       dynamic_cast<Quic::QuicClientTransportSocketFactory&>(*transport_socket_factory);
@@ -258,7 +262,7 @@ IntegrationUtil::makeSingleRequest(const Network::Address::InstanceConstSharedPt
           quic_transport_socket_factory.clientContextConfig()->serverNameIndication(),
           static_cast<uint16_t>(addr->ip()->port())),
       *dispatcher, addr, local_address, quic_stat_names, {}, *mock_stats_store.rootScope(), nullptr,
-      nullptr, generator);
+      nullptr, generator, quic_transport_socket_factory);
   connection->addConnectionCallbacks(connection_callbacks);
   Http::CodecClientProd client(type, std::move(connection), host_description, *dispatcher, random,
                                options);

@@ -29,7 +29,6 @@
 #include "source/common/http/header_utility.h"
 #include "source/common/matcher/matcher.h"
 #include "source/common/router/config_utility.h"
-#include "source/common/router/header_formatter.h"
 #include "source/common/router/header_parser.h"
 #include "source/common/router/metadatamatchcriteria_impl.h"
 #include "source/common/router/router_ratelimit.h"
@@ -81,8 +80,6 @@ public:
   virtual bool supportsPathlessHeaders() const { return false; }
 };
 
-using OptionalHttpFilters = absl::flat_hash_set<std::string>;
-
 class PerFilterConfigs : public Logger::Loggable<Logger::Id::http> {
 public:
   struct FilterConfig {
@@ -91,7 +88,6 @@ public:
   };
 
   PerFilterConfigs(const Protobuf::Map<std::string, ProtobufWkt::Any>& typed_configs,
-                   const OptionalHttpFilters& optional_http_filters,
                    Server::Configuration::ServerFactoryContext& factory_context,
                    ProtobufMessage::ValidationVisitor& validator);
 
@@ -165,14 +161,16 @@ private:
  */
 template <class ProtoType> class CorsPolicyImplBase : public CorsPolicy {
 public:
-  CorsPolicyImplBase(const ProtoType& config, Runtime::Loader& loader)
-      : config_(config), loader_(loader), allow_methods_(config.allow_methods()),
+  CorsPolicyImplBase(const ProtoType& config,
+                     Server::Configuration::CommonFactoryContext& factory_context)
+      : config_(config), loader_(factory_context.runtime()), allow_methods_(config.allow_methods()),
         allow_headers_(config.allow_headers()), expose_headers_(config.expose_headers()),
         max_age_(config.max_age()) {
     for (const auto& string_match : config.allow_origin_string_match()) {
       allow_origins_.push_back(
-          std::make_unique<Matchers::StringMatcherImpl<envoy::type::matcher::v3::StringMatcher>>(
-              string_match));
+          std::make_unique<
+              Matchers::StringMatcherImplWithContext<envoy::type::matcher::v3::StringMatcher>>(
+              string_match, factory_context));
     }
     if (config.has_allow_credentials()) {
       allow_credentials_ = PROTOBUF_GET_WRAPPED_REQUIRED(config, allow_credentials);
@@ -180,6 +178,11 @@ public:
     if (config.has_allow_private_network_access()) {
       allow_private_network_access_ =
           PROTOBUF_GET_WRAPPED_REQUIRED(config, allow_private_network_access);
+    }
+
+    if (config.has_forward_not_matching_preflights()) {
+      forward_not_matching_preflights_ =
+          PROTOBUF_GET_WRAPPED_REQUIRED(config, forward_not_matching_preflights);
     }
   }
 
@@ -211,6 +214,9 @@ public:
     }
     return false;
   };
+  const absl::optional<bool>& forwardNotMatchingPreflights() const override {
+    return forward_not_matching_preflights_;
+  }
 
 private:
   const ProtoType config_;
@@ -222,6 +228,7 @@ private:
   const std::string max_age_;
   absl::optional<bool> allow_credentials_{};
   absl::optional<bool> allow_private_network_access_{};
+  absl::optional<bool> forward_not_matching_preflights_{};
 };
 using CorsPolicyImpl = CorsPolicyImplBase<envoy::config::route::v3::CorsPolicy>;
 
@@ -239,7 +246,6 @@ using CommonConfigSharedPtr = std::shared_ptr<CommonConfigImpl>;
 class CommonVirtualHostImpl : public VirtualHost, Logger::Loggable<Logger::Id::router> {
 public:
   CommonVirtualHostImpl(const envoy::config::route::v3::VirtualHost& virtual_host,
-                        const OptionalHttpFilters& optional_http_filters,
                         const CommonConfigSharedPtr& global_route_config,
                         Server::Configuration::ServerFactoryContext& factory_context,
                         Stats::Scope& scope, ProtobufMessage::ValidationVisitor& validator);
@@ -325,7 +331,8 @@ private:
 
   struct VirtualClusterEntry : public StatNameProvider, public VirtualClusterBase {
     VirtualClusterEntry(const envoy::config::route::v3::VirtualCluster& virtual_cluster,
-                        Stats::Scope& scope, const VirtualClusterStatNames& stat_names);
+                        Stats::Scope& scope, Server::Configuration::CommonFactoryContext& context,
+                        const VirtualClusterStatNames& stat_names);
     std::vector<Http::HeaderUtility::HeaderDataPtr> headers_;
   };
 
@@ -367,7 +374,6 @@ class VirtualHostImpl : Logger::Loggable<Logger::Id::router> {
 public:
   VirtualHostImpl(
       const envoy::config::route::v3::VirtualHost& virtual_host,
-      const OptionalHttpFilters& optional_http_filters,
       const CommonConfigSharedPtr& global_route_config,
       Server::Configuration::ServerFactoryContext& factory_context, Stats::Scope& scope,
       ProtobufMessage::ValidationVisitor& validator,
@@ -406,7 +412,8 @@ class RetryPolicyImpl : public RetryPolicy {
 public:
   RetryPolicyImpl(const envoy::config::route::v3::RetryPolicy& retry_policy,
                   ProtobufMessage::ValidationVisitor& validation_visitor,
-                  Upstream::RetryExtensionFactoryContext& factory_context);
+                  Upstream::RetryExtensionFactoryContext& factory_context,
+                  Server::Configuration::CommonFactoryContext& common_context);
   RetryPolicyImpl() = default;
 
   // Router::RetryPolicy
@@ -579,6 +586,7 @@ public:
   }
 
   std::vector<InternalRedirectPredicateSharedPtr> predicates() const override;
+  const std::vector<Http::LowerCaseString>& responseHeadersToCopy() const override;
 
   uint32_t maxInternalRedirects() const override { return max_internal_redirects_; }
 
@@ -592,6 +600,10 @@ private:
   const absl::flat_hash_set<Http::Code> redirect_response_codes_;
   std::vector<std::pair<InternalRedirectPredicateFactory*, ProtobufTypes::MessagePtr>>
       predicate_factories_;
+  // Vector of header names (as a lower case string to simplify use
+  // later on), to copy from the response that triggers the redirect
+  // into the following request.
+  std::vector<Http::LowerCaseString> response_headers_to_copy_;
   // Keep small members (bools and enums) at the end of class, to reduce alignment overhead.
   const uint32_t max_internal_redirects_{1};
   const bool enabled_{false};
@@ -614,7 +626,6 @@ public:
    */
   RouteEntryImplBase(const CommonVirtualHostSharedPtr& vhost,
                      const envoy::config::route::v3::Route& route,
-                     const OptionalHttpFilters& optional_http_filters,
                      Server::Configuration::ServerFactoryContext& factory_context,
                      ProtobufMessage::ValidationVisitor& validator);
 
@@ -956,8 +967,7 @@ public:
     WeightedClusterEntry(const RouteEntryImplBase* parent, const std::string& rutime_key,
                          Server::Configuration::ServerFactoryContext& factory_context,
                          ProtobufMessage::ValidationVisitor& validator,
-                         const envoy::config::route::v3::WeightedCluster::ClusterWeight& cluster,
-                         const OptionalHttpFilters& optional_http_filters);
+                         const envoy::config::route::v3::WeightedCluster::ClusterWeight& cluster);
 
     uint64_t clusterWeight() const {
       return loader_.snapshot().getInteger(runtime_key_, cluster_weight_);
@@ -1000,7 +1010,7 @@ public:
           stream_info.getRequestHeaders() == nullptr
               ? *Http::StaticEmptyHeaders::get().request_headers
               : *stream_info.getRequestHeaders();
-      responseHeaderParser().evaluateHeaders(headers, request_headers, headers, stream_info);
+      responseHeaderParser().evaluateHeaders(headers, {&request_headers, &headers}, stream_info);
       DynamicRouteEntry::finalizeResponseHeaders(headers, stream_info);
     }
     Http::HeaderTransforms responseHeaderTransforms(const StreamInfo::StreamInfo& stream_info,
@@ -1231,7 +1241,6 @@ class UriTemplateMatcherRouteEntryImpl : public RouteEntryImplBase {
 public:
   UriTemplateMatcherRouteEntryImpl(const CommonVirtualHostSharedPtr& vhost,
                                    const envoy::config::route::v3::Route& route,
-                                   const OptionalHttpFilters& optional_http_filters,
                                    Server::Configuration::ServerFactoryContext& factory_context,
                                    ProtobufMessage::ValidationVisitor& validator);
 
@@ -1263,7 +1272,6 @@ class PrefixRouteEntryImpl : public RouteEntryImplBase {
 public:
   PrefixRouteEntryImpl(const CommonVirtualHostSharedPtr& vhost,
                        const envoy::config::route::v3::Route& route,
-                       const OptionalHttpFilters& optional_http_filters,
                        Server::Configuration::ServerFactoryContext& factory_context,
                        ProtobufMessage::ValidationVisitor& validator);
 
@@ -1297,7 +1305,6 @@ class PathRouteEntryImpl : public RouteEntryImplBase {
 public:
   PathRouteEntryImpl(const CommonVirtualHostSharedPtr& vhost,
                      const envoy::config::route::v3::Route& route,
-                     const OptionalHttpFilters& optional_http_filters,
                      Server::Configuration::ServerFactoryContext& factory_context,
                      ProtobufMessage::ValidationVisitor& validator);
 
@@ -1331,7 +1338,6 @@ class RegexRouteEntryImpl : public RouteEntryImplBase {
 public:
   RegexRouteEntryImpl(const CommonVirtualHostSharedPtr& vhost,
                       const envoy::config::route::v3::Route& route,
-                      const OptionalHttpFilters& optional_http_filters,
                       Server::Configuration::ServerFactoryContext& factory_context,
                       ProtobufMessage::ValidationVisitor& validator);
 
@@ -1366,7 +1372,6 @@ class ConnectRouteEntryImpl : public RouteEntryImplBase {
 public:
   ConnectRouteEntryImpl(const CommonVirtualHostSharedPtr& vhost,
                         const envoy::config::route::v3::Route& route,
-                        const OptionalHttpFilters& optional_http_filters,
                         Server::Configuration::ServerFactoryContext& factory_context,
                         ProtobufMessage::ValidationVisitor& validator);
 
@@ -1396,7 +1401,6 @@ class PathSeparatedPrefixRouteEntryImpl : public RouteEntryImplBase {
 public:
   PathSeparatedPrefixRouteEntryImpl(const CommonVirtualHostSharedPtr& vhost,
                                     const envoy::config::route::v3::Route& route,
-                                    const OptionalHttpFilters& optional_http_filters,
                                     Server::Configuration::ServerFactoryContext& factory_context,
                                     ProtobufMessage::ValidationVisitor& validator);
 
@@ -1426,7 +1430,6 @@ private:
 // Contextual information used to construct the route actions for a match tree.
 struct RouteActionContext {
   const CommonVirtualHostSharedPtr& vhost;
-  const OptionalHttpFilters& optional_http_filters;
   Server::Configuration::ServerFactoryContext& factory_context;
 };
 
@@ -1488,7 +1491,6 @@ DECLARE_FACTORY(RouteListMatchActionFactory);
 class RouteMatcher {
 public:
   RouteMatcher(const envoy::config::route::v3::RouteConfiguration& config,
-               const OptionalHttpFilters& optional_http_filters,
                const CommonConfigSharedPtr& global_route_config,
                Server::Configuration::ServerFactoryContext& factory_context,
                ProtobufMessage::ValidationVisitor& validator, bool validate_clusters);
@@ -1531,7 +1533,6 @@ private:
 class CommonConfigImpl : public CommonConfig {
 public:
   CommonConfigImpl(const envoy::config::route::v3::RouteConfiguration& config,
-                   const OptionalHttpFilters& optional_http_filters,
                    Server::Configuration::ServerFactoryContext& factory_context,
                    ProtobufMessage::ValidationVisitor& validator);
 
@@ -1599,7 +1600,6 @@ private:
 class ConfigImpl : public Config {
 public:
   ConfigImpl(const envoy::config::route::v3::RouteConfiguration& config,
-             const OptionalHttpFilters& optional_http_filters,
              Server::Configuration::ServerFactoryContext& factory_context,
              ProtobufMessage::ValidationVisitor& validator, bool validate_clusters_default);
 

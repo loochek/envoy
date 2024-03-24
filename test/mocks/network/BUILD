@@ -43,6 +43,12 @@ envoy_cc_mock(
 )
 
 envoy_cc_mock(
+    name = "mock_parent_drained_callback_registrar",
+    hdrs = ["mock_parent_drained_callback_registrar.h"],
+    deps = ["//envoy/network:parent_drained_callback_registrar_interface"],
+)
+
+envoy_cc_mock(
     name = "network_mocks",
     srcs = ["mocks.cc"],
     hdrs = ["mocks.h"],
@@ -58,6 +64,7 @@ envoy_cc_mock(
         "//envoy/network:transport_socket_interface",
         "//envoy/server:listener_manager_interface",
         "//source/common/network:address_lib",
+        "//source/common/network:listener_lib",
         "//source/common/network:socket_interface_lib",
         "//source/common/network:utility_lib",
         "//source/common/network/dns_resolver:dns_factory_util_lib",

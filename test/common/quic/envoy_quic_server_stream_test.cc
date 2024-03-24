@@ -278,6 +278,17 @@ TEST_F(EnvoyQuicServerStreamTest, PostRequestAndResponse) {
   EXPECT_EQ(absl::nullopt, quic_stream_->http1StreamEncoderOptions());
   receiveRequest(request_body_, true, request_body_.size() * 2);
   quic_stream_->encodeHeaders(response_headers_, /*end_stream=*/false);
+
+  std::string response(18 * 1024, 'a');
+  Buffer::OwnedImpl buffer(response);
+  quic_stream_->encodeData(buffer, false);
+  quic_stream_->encodeTrailers(response_trailers_);
+}
+
+TEST_F(EnvoyQuicServerStreamTest, PostRequestAndResponseWithMemSliceReleasor) {
+  EXPECT_EQ(absl::nullopt, quic_stream_->http1StreamEncoderOptions());
+  receiveRequest(request_body_, true, request_body_.size() * 2);
+  quic_stream_->encodeHeaders(response_headers_, /*end_stream=*/false);
   quic_stream_->encodeTrailers(response_trailers_);
 }
 
@@ -845,7 +856,7 @@ TEST_F(EnvoyQuicServerStreamTest, StatsGathererLogsOnStreamDestruction) {
   EXPECT_GT(quic_stream_->statsGatherer()->bytesOutstanding(), 0);
   // Close the stream; incoming acks will no longer invoke the stats gatherer but
   // the stats gatherer should log on stream close despite not receiving final downstream ack.
-  EXPECT_CALL(*mock_logger, log(_, _, _, _, _));
+  EXPECT_CALL(*mock_logger, log(_, _));
   quic_stream_->resetStream(Http::StreamResetReason::LocalRefusedStreamReset);
 }
 

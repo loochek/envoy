@@ -40,8 +40,10 @@ Extensions
   resource_monitor/resource_monitor
   retry/retry
   stat_sinks/stat_sinks
+  string_matcher/string_matcher
   transport_socket/transport_socket
   upstream/upstream
   wasm/wasm
   watchdog/watchdog
   load_balancing_policies/load_balancing_policies
+  cluster_specifier/cluster_specifier

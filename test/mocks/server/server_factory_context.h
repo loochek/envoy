@@ -7,7 +7,7 @@
 #include "source/common/quic/quic_stat_names.h"
 #include "source/common/router/context_impl.h"
 #include "source/common/stats/symbol_table.h"
-#include "source/extensions/transport_sockets/tls/context_manager_impl.h"
+#include "source/common/tls/context_manager_impl.h"
 
 #include "test/mocks/access_log/mocks.h"
 #include "test/mocks/api/mocks.h"
@@ -67,18 +67,23 @@ public:
   MOCK_METHOD(ThreadLocal::Instance&, threadLocal, ());
   MOCK_METHOD(OptRef<Server::Admin>, admin, ());
   MOCK_METHOD(TimeSource&, timeSource, ());
-  Event::TestTimeSystem& timeSystem() { return time_system_; }
+  MOCK_METHOD(Event::TestTimeSystem&, timeSystem, ());
   MOCK_METHOD(ProtobufMessage::ValidationContext&, messageValidationContext, ());
   MOCK_METHOD(ProtobufMessage::ValidationVisitor&, messageValidationVisitor, ());
   MOCK_METHOD(Api::Api&, api, ());
+  Http::Context& httpContext() override { return http_context_; }
   Grpc::Context& grpcContext() override { return grpc_context_; }
   Router::Context& routerContext() override { return router_context_; }
+  MOCK_METHOD(ProcessContextOptRef, processContext, ());
   envoy::config::bootstrap::v3::Bootstrap& bootstrap() override { return bootstrap_; }
   MOCK_METHOD(Server::DrainManager&, drainManager, ());
   MOCK_METHOD(Init::Manager&, initManager, ());
   MOCK_METHOD(ServerLifecycleNotifier&, lifecycleNotifier, ());
+  Regex::Engine& regexEngine() override { return regex_engine_; }
   MOCK_METHOD(StatsConfig&, statsConfig, (), ());
   MOCK_METHOD(AccessLog::AccessLogManager&, accessLogManager, (), ());
+  MOCK_METHOD(OverloadManager&, overloadManager, ());
+  MOCK_METHOD(bool, healthCheckFailed, (), (const));
 
   testing::NiceMock<Upstream::MockClusterManager> cluster_manager_;
   testing::NiceMock<Event::MockDispatcher> dispatcher_;
@@ -97,10 +102,28 @@ public:
   testing::NiceMock<MockAdmin> admin_;
   Event::GlobalTimeSystem time_system_;
   testing::NiceMock<Api::MockApi> api_;
+  testing::NiceMock<MockOverloadManager> overload_manager_;
+  Http::ContextImpl http_context_;
   Grpc::ContextImpl grpc_context_;
   Router::ContextImpl router_context_;
   envoy::config::bootstrap::v3::Bootstrap bootstrap_;
   testing::NiceMock<MockOptions> options_;
+  Regex::GoogleReEngine regex_engine_;
+};
+
+class MockGenericFactoryContext : public GenericFactoryContext {
+public:
+  MockGenericFactoryContext();
+  ~MockGenericFactoryContext() override;
+
+  MOCK_METHOD(ServerFactoryContext&, serverFactoryContext, (), (const));
+  MOCK_METHOD(ProtobufMessage::ValidationVisitor&, messageValidationVisitor, (), (const));
+  MOCK_METHOD(Stats::Scope&, scope, ());
+  MOCK_METHOD(Init::Manager&, initManager, ());
+
+  NiceMock<MockServerFactoryContext> server_factory_context_;
+  testing::NiceMock<Stats::MockIsolatedStatsStore> store_;
+  testing::NiceMock<Init::MockManager> init_manager_;
 };
 
 // Stateless mock ServerFactoryContext for cases where it needs to be used concurrently in different
@@ -126,14 +149,19 @@ public:
   MOCK_METHOD(ProtobufMessage::ValidationContext&, messageValidationContext, ());
   MOCK_METHOD(ProtobufMessage::ValidationVisitor&, messageValidationVisitor, ());
   MOCK_METHOD(Api::Api&, api, ());
+  MOCK_METHOD(Http::Context&, httpContext, ());
   MOCK_METHOD(Grpc::Context&, grpcContext, ());
   MOCK_METHOD(Router::Context&, routerContext, ());
+  MOCK_METHOD(ProcessContextOptRef, processContext, ());
   MOCK_METHOD(envoy::config::bootstrap::v3::Bootstrap&, bootstrap, ());
   MOCK_METHOD(Server::DrainManager&, drainManager, ());
   MOCK_METHOD(Init::Manager&, initManager, ());
   MOCK_METHOD(ServerLifecycleNotifier&, lifecycleNotifier, ());
+  MOCK_METHOD(Regex::Engine&, regexEngine, ());
   MOCK_METHOD(StatsConfig&, statsConfig, (), ());
   MOCK_METHOD(AccessLog::AccessLogManager&, accessLogManager, (), ());
+  MOCK_METHOD(OverloadManager&, overloadManager, ());
+  MOCK_METHOD(bool, healthCheckFailed, (), (const));
 };
 
 } // namespace Configuration

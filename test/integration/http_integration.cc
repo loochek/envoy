@@ -29,12 +29,12 @@
 
 #ifdef ENVOY_ENABLE_QUIC
 #include "source/common/quic/client_connection_factory_impl.h"
-#include "source/common/quic/quic_transport_socket_factory.h"
+#include "source/common/quic/quic_client_transport_socket_factory.h"
 #endif
 
-#include "source/extensions/transport_sockets/tls/context_config_impl.h"
-#include "source/extensions/transport_sockets/tls/context_impl.h"
-#include "source/extensions/transport_sockets/tls/ssl_socket.h"
+#include "source/common/tls/context_config_impl.h"
+#include "source/common/tls/context_impl.h"
+#include "source/common/tls/ssl_socket.h"
 
 #include "test/common/upstream/utility.h"
 #include "test/integration/autonomous_upstream.h"
@@ -245,15 +245,13 @@ Network::ClientConnectionPtr HttpIntegrationTest::makeClientConnectionWithOption
       fmt::format("udp://{}:{}", Network::Test::getLoopbackAddressUrlString(version_), port));
   Network::Address::InstanceConstSharedPtr local_addr =
       Network::Test::getCanonicalLoopbackAddress(version_);
-  auto& quic_transport_socket_factory_ref =
-      dynamic_cast<Quic::QuicClientTransportSocketFactory&>(*quic_transport_socket_factory_);
   return Quic::createQuicNetworkConnection(
-      *quic_connection_persistent_info_, quic_transport_socket_factory_ref.getCryptoConfig(),
+      *quic_connection_persistent_info_, quic_transport_socket_factory_->getCryptoConfig(),
       quic::QuicServerId(
-          quic_transport_socket_factory_ref.clientContextConfig()->serverNameIndication(),
+          quic_transport_socket_factory_->clientContextConfig()->serverNameIndication(),
           static_cast<uint16_t>(port)),
       *dispatcher_, server_addr, local_addr, quic_stat_names_, {}, *stats_store_.rootScope(),
-      options, nullptr, connection_id_generator_);
+      options, nullptr, connection_id_generator_, *quic_transport_socket_factory_);
 #else
   ASSERT(false, "running a QUIC integration test without compiling QUIC");
   return nullptr;
@@ -266,21 +264,24 @@ IntegrationCodecClientPtr HttpIntegrationTest::makeHttpConnection(uint32_t port)
 
 IntegrationCodecClientPtr HttpIntegrationTest::makeRawHttpConnection(
     Network::ClientConnectionPtr&& conn,
-    absl::optional<envoy::config::core::v3::Http2ProtocolOptions> http2_options) {
+    absl::optional<envoy::config::core::v3::Http2ProtocolOptions> http2_options,
+    bool wait_till_connected) {
   std::shared_ptr<Upstream::MockClusterInfo> cluster{new NiceMock<Upstream::MockClusterInfo>()};
   cluster->max_response_headers_count_ = 200;
   if (!http2_options.has_value()) {
     http2_options = Http2::Utility::initializeAndValidateOptions(
-        envoy::config::core::v3::Http2ProtocolOptions());
+                        envoy::config::core::v3::Http2ProtocolOptions())
+                        .value();
     http2_options.value().set_allow_connect(true);
     http2_options.value().set_allow_metadata(true);
-#ifdef ENVOY_ENABLE_QUIC
-  } else {
-    cluster->http3_options_ = ConfigHelper::http2ToHttp3ProtocolOptions(
-        http2_options.value(), quic::kStreamReceiveWindowLimit);
-    cluster->http3_options_.set_allow_extended_connect(true);
-#endif
   }
+#ifdef ENVOY_ENABLE_QUIC
+  cluster->http3_options_ = ConfigHelper::http2ToHttp3ProtocolOptions(
+      http2_options.value(), quic::kStreamReceiveWindowLimit);
+  cluster->http3_options_.set_allow_extended_connect(true);
+  cluster->http3_options_.set_allow_metadata(true);
+#endif
+
   cluster->http2_options_ = http2_options.value();
   cluster->http1_settings_.enable_trailers_ = true;
 
@@ -295,7 +296,8 @@ IntegrationCodecClientPtr HttpIntegrationTest::makeRawHttpConnection(
   // This call may fail in QUICHE because of INVALID_VERSION. QUIC connection doesn't support
   // in-connection version negotiation.
   auto codec = std::make_unique<IntegrationCodecClient>(*dispatcher_, random_, std::move(conn),
-                                                        host_description, downstream_protocol_);
+                                                        host_description, downstream_protocol_,
+                                                        wait_till_connected);
   if (downstream_protocol_ == Http::CodecType::HTTP3 && codec->disconnected()) {
     // Connection may get closed during version negotiation or handshake.
     // TODO(#8479) QUIC connection doesn't support in-connection version negotiationPropagate
@@ -347,7 +349,15 @@ void HttpIntegrationTest::useAccessLog(
   ASSERT_TRUE(config_helper_.setAccessLog(access_log_name_, format, formatters));
 }
 
-HttpIntegrationTest::~HttpIntegrationTest() { cleanupUpstreamAndDownstream(); }
+HttpIntegrationTest::~HttpIntegrationTest() {
+  // Make sure any open streams have been closed. If there's an open stream, the decoder will
+  // be out of scope, and so open streams result in writing to freed memory.
+  if (codec_client_) {
+    EXPECT_EQ(codec_client_->numActiveRequests(), 0)
+        << "test requires explicit cleanupUpstreamAndDownstream";
+  }
+  cleanupUpstreamAndDownstream();
+}
 
 void HttpIntegrationTest::initialize() {
   if (downstream_protocol_ != Http::CodecType::HTTP3) {
@@ -357,11 +367,11 @@ void HttpIntegrationTest::initialize() {
   // Needs to be instantiated before base class calls initialize() which starts a QUIC listener
   // according to the config.
   quic_transport_socket_factory_ = IntegrationUtil::createQuicUpstreamTransportSocketFactory(
-      *api_, stats_store_, context_manager_, san_to_match_);
+      *api_, stats_store_, context_manager_, thread_local_, san_to_match_);
 
   // Needed to config QUIC transport socket factory, and needs to be added before base class calls
   // initialize().
-  config_helper_.addQuicDownstreamTransportSocketConfig(enable_quic_early_data_);
+  config_helper_.addQuicDownstreamTransportSocketConfig(enable_quic_early_data_, custom_alpns_);
 
   BaseIntegrationTest::initialize();
   registerTestServerPorts({"http"}, test_server_);
@@ -378,8 +388,7 @@ void HttpIntegrationTest::initialize() {
   quic_connection_persistent_info->quic_config_.SetInitialStreamFlowControlWindowToSend(
       Http3::Utility::OptionsLimits::DEFAULT_INITIAL_STREAM_WINDOW_SIZE);
   // Adjust timeouts.
-  quic::QuicTime::Delta connect_timeout =
-      quic::QuicTime::Delta::FromSeconds(5 * TSAN_TIMEOUT_FACTOR);
+  quic::QuicTime::Delta connect_timeout = quic::QuicTime::Delta::FromSeconds(5 * TIMEOUT_FACTOR);
   quic_connection_persistent_info->quic_config_.set_max_time_before_crypto_handshake(
       connect_timeout);
   quic_connection_persistent_info->quic_config_.set_max_idle_time_before_crypto_handshake(

@@ -6,6 +6,7 @@ EXTENSIONS = {
 
     "envoy.access_loggers.file":                        "//source/extensions/access_loggers/file:config",
     "envoy.access_loggers.extension_filters.cel":       "//source/extensions/access_loggers/filters/cel:config",
+    "envoy.access_loggers.fluentd"  :                   "//source/extensions/access_loggers/fluentd:config",
     "envoy.access_loggers.http_grpc":                   "//source/extensions/access_loggers/grpc:http_config",
     "envoy.access_loggers.tcp_grpc":                    "//source/extensions/access_loggers/grpc:tcp_config",
     "envoy.access_loggers.open_telemetry":              "//source/extensions/access_loggers/open_telemetry:config",
@@ -115,6 +116,11 @@ EXTENSIONS = {
     "envoy.matching.actions.format_string":             "//source/extensions/matching/actions/format_string:config",
 
     #
+    # StringMatchers
+    #
+    "envoy.string_matcher.lua":                         "//source/extensions/string_matcher/lua:config",
+
+    #
     # HTTP filters
     #
 
@@ -124,6 +130,7 @@ EXTENSIONS = {
     "envoy.filters.http.aws_lambda":                    "//source/extensions/filters/http/aws_lambda:config",
     "envoy.filters.http.aws_request_signing":           "//source/extensions/filters/http/aws_request_signing:config",
     "envoy.filters.http.bandwidth_limit":               "//source/extensions/filters/http/bandwidth_limit:config",
+    "envoy.filters.http.basic_auth":                    "//source/extensions/filters/http/basic_auth:config",
     "envoy.filters.http.buffer":                        "//source/extensions/filters/http/buffer:config",
     "envoy.filters.http.cache":                         "//source/extensions/filters/http/cache:config",
     "envoy.filters.http.cdn_loop":                      "//source/extensions/filters/http/cdn_loop:config",
@@ -266,6 +273,20 @@ EXTENSIONS = {
     "envoy.tracers.opentelemetry":                      "//source/extensions/tracers/opentelemetry:config",
 
     #
+    # OpenTelemetry Resource Detectors
+    #
+
+    "envoy.tracers.opentelemetry.resource_detectors.environment":         "//source/extensions/tracers/opentelemetry/resource_detectors/environment:config",
+    "envoy.tracers.opentelemetry.resource_detectors.dynatrace":           "//source/extensions/tracers/opentelemetry/resource_detectors/dynatrace:config",
+
+    #
+    # OpenTelemetry tracer samplers
+    #
+
+    "envoy.tracers.opentelemetry.samplers.always_on":         "//source/extensions/tracers/opentelemetry/samplers/always_on:config",
+    "envoy.tracers.opentelemetry.samplers.dynatrace":         "//source/extensions/tracers/opentelemetry/samplers/dynatrace:config",
+
+    #
     # Transport sockets
     #
 
@@ -276,6 +297,7 @@ EXTENSIONS = {
     "envoy.transport_sockets.tap":                      "//source/extensions/transport_sockets/tap:config",
     "envoy.transport_sockets.starttls":                 "//source/extensions/transport_sockets/starttls:config",
     "envoy.transport_sockets.tcp_stats":                "//source/extensions/transport_sockets/tcp_stats:config",
+    "envoy.transport_sockets.tls":                      "//source/extensions/transport_sockets/tls:config",
     "envoy.transport_sockets.internal_upstream":        "//source/extensions/transport_sockets/internal_upstream:config",
 
     #
@@ -327,7 +349,6 @@ EXTENSIONS = {
     "envoy.wasm.runtime.null":                          "//source/extensions/wasm_runtime/null:config",
     "envoy.wasm.runtime.v8":                            "//source/extensions/wasm_runtime/v8:config",
     "envoy.wasm.runtime.wamr":                          "//source/extensions/wasm_runtime/wamr:config",
-    "envoy.wasm.runtime.wavm":                          "//source/extensions/wasm_runtime/wavm:config",
     "envoy.wasm.runtime.wasmtime":                      "//source/extensions/wasm_runtime/wasmtime:config",
 
     #
@@ -480,6 +501,12 @@ EXTENSIONS = {
     # Geolocation Provider
     #
     "envoy.geoip_providers.maxmind":                         "//source/extensions/geoip_providers/maxmind:config",
+
+    #
+    # cluster specifier plugin
+    #
+
+    "envoy.router.cluster_specifier_plugin.lua": "//source/extensions/router/cluster_specifiers/lua:config",
 }
 
 # These can be changed to ["//visibility:public"], for  downstream builds which

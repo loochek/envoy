@@ -93,6 +93,7 @@ public:
                               const Envoy::Http::RequestHeaderMap& headers,
                               Protobuf::Map<std::string, std::string>&& context_extensions,
                               envoy::config::core::v3::Metadata&& metadata_context,
+                              envoy::config::core::v3::Metadata&& route_metadata_context,
                               envoy::service::auth::v3::CheckRequest& request,
                               uint64_t max_request_bytes, bool pack_as_bytes,
                               bool include_peer_certificate, bool include_tls_session,
@@ -112,9 +113,11 @@ public:
                              const Protobuf::Map<std::string, std::string>& destination_labels);
 
   static MatcherSharedPtr toRequestMatchers(const envoy::type::matcher::v3::ListStringMatcher& list,
-                                            bool add_http_headers);
+                                            bool add_http_headers,
+                                            Server::Configuration::CommonFactoryContext& context);
   static std::vector<Matchers::StringMatcherPtr>
-  createStringMatchers(const envoy::type::matcher::v3::ListStringMatcher& list);
+  createStringMatchers(const envoy::type::matcher::v3::ListStringMatcher& list,
+                       Server::Configuration::CommonFactoryContext& context);
 
 private:
   static void setAttrContextPeer(envoy::service::auth::v3::AttributeContext::Peer& peer,

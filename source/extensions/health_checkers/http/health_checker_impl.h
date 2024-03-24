@@ -47,8 +47,8 @@ DECLARE_FACTORY(HttpHealthCheckerFactory);
 class HttpHealthCheckerImpl : public HealthCheckerImplBase {
 public:
   HttpHealthCheckerImpl(const Cluster& cluster, const envoy::config::core::v3::HealthCheck& config,
-                        Event::Dispatcher& dispatcher, Runtime::Loader& runtime,
-                        Random::RandomGenerator& random, HealthCheckEventLoggerPtr&& event_logger);
+                        Server::Configuration::HealthCheckerFactoryContext& context,
+                        HealthCheckEventLoggerPtr&& event_logger);
 
   // Returns the HTTP protocol used for the health checker.
   Http::Protocol protocol() const;
@@ -141,7 +141,14 @@ private:
     Http::CodecClientPtr client_;
     Http::ResponseHeaderMapPtr response_headers_;
     Buffer::InstancePtr response_body_;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdangling-reference"
+#endif
     const std::string& hostname_;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     Network::ConnectionInfoProviderSharedPtr local_connection_info_provider_;
     // Keep small members (bools and enums) at the end of class, to reduce alignment overhead.
     const Http::Protocol protocol_;
@@ -169,7 +176,7 @@ private:
   PayloadMatcher::MatchSegments receive_bytes_;
   const envoy::config::core::v3::RequestMethod method_;
   uint64_t response_buffer_size_;
-  absl::optional<Matchers::StringMatcherImpl<envoy::type::matcher::v3::StringMatcher>>
+  absl::optional<Matchers::StringMatcherImplWithContext<envoy::type::matcher::v3::StringMatcher>>
       service_name_matcher_;
   Router::HeaderParserPtr request_headers_parser_;
   const HttpStatusChecker http_status_checker_;

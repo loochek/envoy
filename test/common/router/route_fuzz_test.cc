@@ -140,6 +140,7 @@ DEFINE_PROTO_FUZZER(const test::common::router::RouteTestCase& input) {
   static NiceMock<Envoy::StreamInfo::MockStreamInfo> stream_info;
   static NiceMock<Server::Configuration::MockServerFactoryContext> factory_context;
   static ScopedInjectableLoader<Regex::Engine> engine(std::make_unique<Regex::GoogleReEngine>());
+
   try {
     if (!validateConfig(input)) {
       return;
@@ -148,7 +149,7 @@ DEFINE_PROTO_FUZZER(const test::common::router::RouteTestCase& input) {
     TestUtility::validate(input);
     const auto cleaned_route_config = cleanRouteConfig(input.config());
     ENVOY_LOG_MISC(debug, "cleaned route config: {}", cleaned_route_config.DebugString());
-    ConfigImpl config(cleaned_route_config, OptionalHttpFilters(), factory_context,
+    ConfigImpl config(cleaned_route_config, factory_context,
                       ProtobufMessage::getNullValidationVisitor(), true);
     auto headers = Fuzz::fromHeaders<Http::TestRequestHeaderMapImpl>(input.headers());
     auto route = config.route(headers, stream_info, input.random_value());

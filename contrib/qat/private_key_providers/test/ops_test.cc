@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "source/extensions/transport_sockets/tls/private_key/private_key_manager_impl.h"
+#include "source/common/tls/private_key/private_key_manager_impl.h"
 
 #include "test/common/stats/stat_test_utility.h"
 #include "test/mocks/server/transport_socket_factory_context.h"
@@ -44,7 +44,8 @@ public:
 class FakeSingletonManager : public Singleton::Manager {
 public:
   FakeSingletonManager(LibQatCryptoSharedPtr libqat) : libqat_(libqat) {}
-  Singleton::InstanceSharedPtr get(const std::string&, Singleton::SingletonFactoryCb) override {
+  Singleton::InstanceSharedPtr get(const std::string&, Singleton::SingletonFactoryCb,
+                                   bool) override {
     return std::make_shared<QatManager>(libqat_);
   }
 

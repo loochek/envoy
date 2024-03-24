@@ -48,9 +48,9 @@ public:
   Router::RetryStatePtr createRetryState(const Router::RetryPolicy&, RequestHeaderMap&,
                                          const Upstream::ClusterInfo&,
                                          const Router::VirtualCluster*,
-                                         Router::RouteStatsContextOptRef, Runtime::Loader&,
-                                         Random::RandomGenerator&, Event::Dispatcher&, TimeSource&,
-                                         Upstream::ResourcePriority) override {
+                                         Router::RouteStatsContextOptRef,
+                                         Server::Configuration::CommonFactoryContext&,
+                                         Event::Dispatcher&, Upstream::ResourcePriority) override {
     EXPECT_EQ(nullptr, retry_state_);
     retry_state_ = new NiceMock<Router::MockRetryState>();
 
@@ -359,6 +359,16 @@ public:
     return nullptr;
   }
 
+  FuzzCluster*
+  selectClusterByThreadLocalCluster(Upstream::ThreadLocalCluster& thread_local_cluster) {
+    for (auto& cluster : clusters_) {
+      if (&cluster->tlc_ == &thread_local_cluster) {
+        return cluster.get();
+      }
+    }
+    return nullptr;
+  }
+
   void reset() {
     for (auto& cluster : clusters_) {
       cluster->reset();
@@ -395,15 +405,14 @@ public:
   std::string name() const override { return "envoy.filters.connection_pools.http.generic"; }
   std::string category() const override { return "envoy.upstreams"; }
   Router::GenericConnPoolPtr
-  createGenericConnPool(Upstream::ThreadLocalCluster&,
+  createGenericConnPool(Upstream::ThreadLocalCluster& thread_local_cluster,
                         Router::GenericConnPoolFactory::UpstreamProtocol upstream_protocol,
-                        const Router::RouteEntry& route_entry,
-                        absl::optional<Envoy::Http::Protocol> protocol,
+                        Upstream::ResourcePriority, absl::optional<Envoy::Http::Protocol> protocol,
                         Upstream::LoadBalancerContext*) const override {
     if (upstream_protocol != UpstreamProtocol::HTTP) {
       return nullptr;
     }
-    FuzzCluster* cluster = cluster_manager_.selectClusterByName(route_entry.clusterName());
+    FuzzCluster* cluster = cluster_manager_.selectClusterByThreadLocalCluster(thread_local_cluster);
     if (cluster == nullptr) {
       return nullptr;
     }
@@ -430,14 +439,14 @@ public:
       : pool_(fake_stats_.symbolTable()), fuzz_conn_pool_factory_(cluster_manager_),
         reg_(fuzz_conn_pool_factory_), router_context_(fake_stats_.symbolTable()),
         shadow_writer_(new NiceMock<Router::MockShadowWriter>()),
-        filter_config_(pool_.add("fuzz_filter"), local_info_, *fake_stats_.rootScope(), cm_,
-                       runtime_, random_, Router::ShadowWriterPtr{shadow_writer_},
-                       true /*emit_dynamic_stats*/, false /*start_child_span*/,
-                       true /*suppress_envoy_headers*/, false /*respect_expected_rq_timeout*/,
-                       true /*suppress_grpc_request_failure_code_stats*/,
-                       false /*flush_upstream_log_on_upstream_stream*/,
-                       std::move(strict_headers_to_check), time_system_.timeSystem(), http_context_,
-                       router_context_) {
+        filter_config_(
+            factory_context_, pool_.add("fuzz_filter"), local_info_, *fake_stats_.rootScope(), cm_,
+            runtime_, random_, Router::ShadowWriterPtr{shadow_writer_}, true /*emit_dynamic_stats*/,
+            false /*start_child_span*/, true /*suppress_envoy_headers*/,
+            false /*respect_expected_rq_timeout*/,
+            true /*suppress_grpc_request_failure_code_stats*/,
+            false /*flush_upstream_log_on_upstream_stream*/, std::move(strict_headers_to_check),
+            time_system_.timeSystem(), http_context_, router_context_) {
     cluster_manager_.createDefaultClusters(*this);
     // Install the `RouterFuzzFilter` here
     ON_CALL(filter_factory_, createFilterChain(_))
@@ -475,6 +484,7 @@ public:
   Event::SimulatedTimeSystem time_system_;
 
 private:
+  NiceMock<Server::Configuration::StatelessMockServerFactoryContext> factory_context_;
   Stats::StatNamePool pool_;
   FuzzClusterManager cluster_manager_;
   FuzzGenericConnPoolFactory fuzz_conn_pool_factory_;

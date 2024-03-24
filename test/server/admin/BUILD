@@ -21,11 +21,22 @@ envoy_cc_test(
     ],
 )
 
+envoy_cc_test(
+    name = "admin_factory_context_test",
+    srcs = ["admin_factory_context_test.cc"],
+    deps = [
+        "//source/common/listener_manager:listener_info_lib",
+        "//source/server/admin:admin_factory_context",
+        "//test/mocks/server:instance_mocks",
+    ],
+)
+
 envoy_cc_test_library(
     name = "admin_instance_lib",
     srcs = envoy_select_admin_functionality(["admin_instance.cc"]),
     hdrs = envoy_select_admin_functionality(["admin_instance.h"]),
     deps = [
+        "//source/server:configuration_lib",
         "//source/server/admin:admin_lib",
         "//test/mocks/runtime:runtime_mocks",
         "//test/mocks/server:instance_mocks",
@@ -86,8 +97,10 @@ envoy_cc_test(
         "//source/common/thread_local:thread_local_lib",
         "//source/server/admin:utils_lib",
         "//test/mocks/server:admin_stream_mocks",
+        "//test/mocks/server:server_factory_context_mocks",
         "//test/test_common:logging_lib",
         "//test/test_common:real_threads_test_helper_lib",
+        "//test/test_common:stats_utility_lib",
         "//test/test_common:utility_lib",
     ],
 )
@@ -135,6 +148,8 @@ envoy_cc_test(
         "//test/mocks/event:event_mocks",
         "//test/mocks/stats:stats_mocks",
         "//test/mocks/thread_local:thread_local_mocks",
+        "//test/mocks/upstream:cluster_manager_mocks",
+        "//test/test_common:stats_utility_lib",
         "//test/test_common:utility_lib",
     ],
 )
@@ -148,6 +163,7 @@ envoy_cc_benchmark_binary(
         "//source/common/stats:thread_local_store_lib",
         "//source/server/admin:admin_lib",
         "//test/common/stats:real_thread_test_base",
+        "//test/mocks/upstream:cluster_manager_mocks",
     ],
 )
 
@@ -172,6 +188,8 @@ envoy_cc_test(
         "//source/common/stats:tag_producer_lib",
         "//source/common/stats:thread_local_store_lib",
         "//source/server/admin:prometheus_stats_lib",
+        "//test/mocks/upstream:cluster_manager_mocks",
+        "//test/test_common:stats_utility_lib",
         "//test/test_common:utility_lib",
     ],
 )
@@ -199,7 +217,7 @@ envoy_cc_test(
     srcs = envoy_select_admin_functionality(["server_info_handler_test.cc"]),
     deps = [
         ":admin_instance_lib",
-        "//source/extensions/transport_sockets/tls:context_config_lib",
+        "//source/common/tls:context_config_lib",
         "//test/test_common:logging_lib",
         "//test/test_common:test_runtime_lib",
         "@envoy_api//envoy/admin/v3:pkg_cc_proto",
@@ -211,6 +229,8 @@ envoy_cc_test(
     srcs = envoy_select_admin_functionality(["clusters_handler_test.cc"]),
     deps = [
         ":admin_instance_lib",
+        "//test/common/upstream:utility_lib",
+        "//test/mocks/event:event_mocks",
         "@envoy_api//envoy/admin/v3:pkg_cc_proto",
     ],
 )

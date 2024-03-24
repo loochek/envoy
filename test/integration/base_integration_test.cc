@@ -18,8 +18,8 @@
 #include "source/common/common/assert.h"
 #include "source/common/event/libevent.h"
 #include "source/common/network/utility.h"
-#include "source/extensions/transport_sockets/tls/context_config_impl.h"
-#include "source/extensions/transport_sockets/tls/ssl_socket.h"
+#include "source/common/tls/context_config_impl.h"
+#include "source/common/tls/ssl_socket.h"
 #include "source/server/proto_descriptors.h"
 
 #include "test/integration/utility.h"
@@ -74,6 +74,8 @@ BaseIntegrationTest::BaseIntegrationTest(const InstanceConstSharedPtrFn& upstrea
       }));
   ON_CALL(factory_context_.server_context_, api()).WillByDefault(ReturnRef(*api_));
   ON_CALL(factory_context_, statsScope()).WillByDefault(ReturnRef(*stats_store_.rootScope()));
+  ON_CALL(factory_context_, sslContextManager()).WillByDefault(ReturnRef(context_manager_));
+  ON_CALL(factory_context_.server_context_, threadLocal()).WillByDefault(ReturnRef(thread_local_));
 
 #ifndef ENVOY_ADMIN_FUNCTIONALITY
   config_helper_.addConfigModifier(
@@ -180,10 +182,11 @@ void BaseIntegrationTest::createUpstream(Network::Address::InstanceConstSharedPt
       upstream_tls_ ? createUpstreamTlsContext(config)
                     : Network::Test::createRawBufferDownstreamSocketFactory();
   if (autonomous_upstream_) {
-    fake_upstreams_.emplace_back(new AutonomousUpstream(std::move(factory), endpoint, config,
-                                                        autonomous_allow_incomplete_streams_));
+    fake_upstreams_.emplace_back(std::make_unique<AutonomousUpstream>(
+        std::move(factory), endpoint, config, autonomous_allow_incomplete_streams_));
   } else {
-    fake_upstreams_.emplace_back(new FakeUpstream(std::move(factory), endpoint, config));
+    fake_upstreams_.emplace_back(
+        std::make_unique<FakeUpstream>(std::move(factory), endpoint, config));
   }
 }
 
@@ -459,11 +462,7 @@ void BaseIntegrationTest::createGeneratedApiTestServer(
   if (config_helper_.bootstrap().static_resources().listeners_size() > 0 &&
       !defer_listener_finalization_) {
 
-    // Wait for listeners to be created before invoking registerTestServerPorts() below, as that
-    // needs to know about the bound listener ports.
-    // Using 2x default timeout to cover for slow TLS implementations (no inline asm) on slow
-    // computers (e.g., Raspberry Pi) that sometimes time out on TLS listeners here.
-    Event::TestTimeSystem::RealTimeBound bound(2 * TestUtility::DefaultTimeout);
+    Event::TestTimeSystem::RealTimeBound bound(listeners_bound_timeout_ms_);
     const char* success = "listener_manager.listener_create_success";
     const char* rejected = "listener_manager.lds.update_rejected";
     for (Stats::CounterSharedPtr success_counter = test_server->counter(success),
@@ -540,7 +539,7 @@ std::string BaseIntegrationTest::waitForAccessLog(const std::string& filename, u
 
   // Wait a max of 1s for logs to flush to disk.
   std::string contents;
-  const int num_iterations = TSAN_TIMEOUT_FACTOR * 1000;
+  const int num_iterations = TIMEOUT_FACTOR * 1000;
   for (int i = 0; i < num_iterations; ++i) {
     contents = TestEnvironment::readFileToStringForTest(filename);
     std::vector<std::string> entries = absl::StrSplit(contents, '\n', absl::SkipEmpty());

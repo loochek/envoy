@@ -51,10 +51,17 @@ envoy_cc_library(
         ":connection_balancer_interface",
         ":listen_socket_interface",
         ":listener_interface",
+        "//envoy/common:random_generator_interface",
         "//envoy/runtime:runtime_interface",
         "//envoy/ssl:context_interface",
         "//source/common/common:interval_value",
     ],
+)
+
+envoy_cc_library(
+    name = "parent_drained_callback_registrar_interface",
+    hdrs = ["parent_drained_callback_registrar.h"],
+    deps = [":address_interface"],
 )
 
 envoy_cc_library(

@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "source/common/listener_manager/connection_handler_impl.h"
 #include "source/common/network/listen_socket_impl.h"
 #include "source/common/quic/envoy_quic_alarm_factory.h"
 #include "source/common/quic/envoy_quic_clock.h"
@@ -9,8 +10,7 @@
 #include "source/common/quic/envoy_quic_dispatcher.h"
 #include "source/common/quic/envoy_quic_server_session.h"
 #include "source/common/quic/envoy_quic_utils.h"
-#include "source/common/quic/quic_transport_socket_factory.h"
-#include "source/extensions/listener_managers/listener_manager/connection_handler_impl.h"
+#include "source/common/quic/quic_server_transport_socket_factory.h"
 #include "source/extensions/quic/crypto_stream/envoy_quic_crypto_server_stream.h"
 #include "source/server/configuration_impl.h"
 
@@ -77,7 +77,8 @@ public:
             crypto_stream_factory_, connection_id_generator_),
         connection_id_(quic::test::TestConnectionId(1)),
         transport_socket_factory_(true, listener_config_.listenerScope(),
-                                  std::make_unique<NiceMock<Ssl::MockServerContextConfig>>()) {
+                                  std::make_unique<NiceMock<Ssl::MockServerContextConfig>>(),
+                                  ssl_context_manager_, {}) {
     auto writer = new testing::NiceMock<quic::test::MockPacketWriter>();
     envoy_quic_dispatcher_.InitializeWithWriter(writer);
     EXPECT_CALL(*writer, WritePacket(_, _, _, _, _, _))
@@ -252,6 +253,7 @@ protected:
   quic::DeterministicConnectionIdGenerator connection_id_generator_;
   EnvoyQuicDispatcher envoy_quic_dispatcher_;
   quic::QuicConnectionId connection_id_;
+  testing::NiceMock<Ssl::MockContextManager> ssl_context_manager_;
   QuicServerTransportSocketFactory transport_socket_factory_;
 };
 

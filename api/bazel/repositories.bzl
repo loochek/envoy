@@ -26,7 +26,7 @@ def api_dependencies():
     )
 
     external_http_archive(
-        name = "com_github_cncf_udpa",
+        name = "com_github_cncf_xds",
     )
 
     external_http_archive(
@@ -54,6 +54,9 @@ def api_dependencies():
 
     external_http_archive(
         name = "com_github_chrusty_protoc_gen_jsonschema",
+    )
+    external_http_archive(
+        name = "rules_proto_grpc",
     )
 
     external_http_archive(

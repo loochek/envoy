@@ -8,9 +8,9 @@
 
 #include "source/common/api/os_sys_calls_impl.h"
 #include "source/common/common/fmt.h"
+#include "source/common/listener_manager/listener_manager_impl.h"
 #include "source/common/protobuf/utility.h"
 #include "source/common/runtime/runtime_features.h"
-#include "source/extensions/listener_managers/listener_manager/listener_manager_impl.h"
 #include "source/server/config_validation/server.h"
 #include "source/server/configuration_impl.h"
 #include "source/server/options_impl.h"
@@ -46,6 +46,9 @@ OptionsImpl asConfigYaml(const OptionsImpl& src, Api::Api& api) {
 }
 
 static std::vector<absl::string_view> unsuported_win32_configs = {
+#if defined(WIN32)
+    "rbac_envoy.yaml",
+#endif
 #if defined(WIN32) && !defined(SO_ORIGINAL_DST)
     "configs_original-dst-cluster_proxy_config.yaml"
 #endif
@@ -94,9 +97,13 @@ public:
         .Times(AtLeast(0));
 
     envoy::config::bootstrap::v3::Bootstrap bootstrap;
-    Server::InstanceUtil::loadBootstrapConfig(
-        bootstrap, options_, server_.messageValidationContext().staticValidationVisitor(), *api_);
-    Server::Configuration::InitialImpl initial_config(bootstrap);
+    EXPECT_TRUE(Server::InstanceUtil::loadBootstrapConfig(
+                    bootstrap, options_,
+                    server_.messageValidationContext().staticValidationVisitor(), *api_)
+                    .ok());
+    absl::Status creation_status;
+    Server::Configuration::InitialImpl initial_config(bootstrap, creation_status);
+    THROW_IF_NOT_OK_REF(creation_status);
     Server::Configuration::MainImpl main_config;
 
     // Emulate main implementation of initializing bootstrap extensions.
@@ -153,7 +160,7 @@ public:
     ON_CALL(server_, serverFactoryContext()).WillByDefault(ReturnRef(server_factory_context_));
 
     try {
-      main_config.initialize(bootstrap, server_, *cluster_manager_factory_);
+      THROW_IF_NOT_OK(main_config.initialize(bootstrap, server_, *cluster_manager_factory_));
     } catch (const EnvoyException& ex) {
       ADD_FAILURE() << fmt::format("'{}' config failed. Error: {}", options_.configPath(),
                                    ex.what());
@@ -208,8 +215,9 @@ void testMerge() {
   OptionsImpl options(Server::createTestOptionsImpl("envoyproxy_io_proxy.yaml", overlay,
                                                     Network::Address::IpVersion::v6));
   envoy::config::bootstrap::v3::Bootstrap bootstrap;
-  Server::InstanceUtil::loadBootstrapConfig(bootstrap, options,
-                                            ProtobufMessage::getStrictValidationVisitor(), *api);
+  ASSERT_TRUE(Server::InstanceUtil::loadBootstrapConfig(
+                  bootstrap, options, ProtobufMessage::getStrictValidationVisitor(), *api)
+                  .ok());
   EXPECT_EQ(2, bootstrap.static_resources().clusters_size());
 }
 
@@ -238,8 +246,9 @@ uint32_t run(const std::string& directory) {
           Envoy::Server::createTestOptionsImpl(filename, "", Network::Address::IpVersion::v6));
       ConfigTest test1(options);
       envoy::config::bootstrap::v3::Bootstrap bootstrap;
-      Server::InstanceUtil::loadBootstrapConfig(
-          bootstrap, options, ProtobufMessage::getStrictValidationVisitor(), *api);
+      EXPECT_TRUE(Server::InstanceUtil::loadBootstrapConfig(
+                      bootstrap, options, ProtobufMessage::getStrictValidationVisitor(), *api)
+                      .ok());
       ENVOY_LOG_MISC(info, "testing {} as yaml.", filename);
       OptionsImpl config = asConfigYaml(options, *api);
       ConfigTest test2(config);

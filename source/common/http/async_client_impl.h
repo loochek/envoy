@@ -59,10 +59,10 @@ class AsyncRequestSharedImpl;
 class AsyncClientImpl final : public AsyncClient {
 public:
   AsyncClientImpl(Upstream::ClusterInfoConstSharedPtr cluster, Stats::Store& stats_store,
-                  Event::Dispatcher& dispatcher, const LocalInfo::LocalInfo& local_info,
-                  Upstream::ClusterManager& cm, Runtime::Loader& runtime,
-                  Random::RandomGenerator& random, Router::ShadowWriterPtr&& shadow_writer,
-                  Http::Context& http_context, Router::Context& router_context);
+                  Event::Dispatcher& dispatcher, Upstream::ClusterManager& cm,
+                  Server::Configuration::CommonFactoryContext& factory_context,
+                  Router::ShadowWriterPtr&& shadow_writer, Http::Context& http_context,
+                  Router::Context& router_context);
   ~AsyncClientImpl() override;
 
   // Http::AsyncClient
@@ -71,7 +71,7 @@ public:
   Stream* start(StreamCallbacks& callbacks, const AsyncClient::StreamOptions& options) override;
   OngoingRequest* startRequest(RequestHeaderMapPtr&& request_headers, Callbacks& callbacks,
                                const AsyncClient::RequestOptions& options) override;
-  Singleton::Manager& singleton_manager_;
+  Server::Configuration::CommonFactoryContext& factory_context_;
   Upstream::ClusterInfoConstSharedPtr cluster_;
   Event::Dispatcher& dispatcher() override { return dispatcher_; }
 
@@ -151,6 +151,7 @@ protected:
   absl::optional<AsyncClient::StreamDestructorCallbacks> destructor_callback_;
   // Callback to listen for low/high/overflow watermark events.
   absl::optional<std::reference_wrapper<DecoderFilterWatermarkCallbacks>> watermark_callbacks_;
+  bool complete_{};
 
 private:
   void cleanup();
@@ -208,13 +209,10 @@ private:
   }
   // The async client won't pause if sending 1xx headers so simply swallow any.
   void encode1xxHeaders(ResponseHeaderMapPtr&&) override {}
-  ResponseHeaderMapOptRef informationalHeaders() const override { return {}; }
   void encodeHeaders(ResponseHeaderMapPtr&& headers, bool end_stream,
                      absl::string_view details) override;
-  ResponseHeaderMapOptRef responseHeaders() const override { return {}; }
   void encodeData(Buffer::Instance& data, bool end_stream) override;
   void encodeTrailers(ResponseTrailerMapPtr&& trailers) override;
-  ResponseTrailerMapOptRef responseTrailers() const override { return {}; }
   void encodeMetadata(MetadataMapPtr&&) override {}
   void onDecoderFilterAboveWriteBufferHighWatermark() override {
     ++high_watermark_calls_;
@@ -251,9 +249,19 @@ private:
   OptRef<DownstreamStreamFilterCallbacks> downstreamCallbacks() override { return {}; }
   OptRef<UpstreamStreamFilterCallbacks> upstreamCallbacks() override { return {}; }
   void resetIdleTimer() override {}
-  void setUpstreamOverrideHost(absl::string_view) override {}
-  absl::optional<absl::string_view> upstreamOverrideHost() const override { return {}; }
+  void setUpstreamOverrideHost(Upstream::LoadBalancerContext::OverrideHost) override {}
+  absl::optional<Upstream::LoadBalancerContext::OverrideHost>
+  upstreamOverrideHost() const override {
+    return absl::nullopt;
+  }
   absl::string_view filterConfigName() const override { return ""; }
+  RequestHeaderMapOptRef requestHeaders() override { return makeOptRefFromPtr(request_headers_); }
+  RequestTrailerMapOptRef requestTrailers() override {
+    return makeOptRefFromPtr(request_trailers_);
+  }
+  ResponseHeaderMapOptRef informationalHeaders() override { return {}; }
+  ResponseHeaderMapOptRef responseHeaders() override { return {}; }
+  ResponseTrailerMapOptRef responseTrailers() override { return {}; }
 
   // ScopeTrackedObject
   void dumpState(std::ostream& os, int indent_level) const override {
@@ -268,6 +276,7 @@ private:
   StreamInfo::StreamInfoImpl stream_info_;
   Tracing::NullSpan active_span_;
   const Tracing::Config& tracing_config_;
+  const std::unique_ptr<const Router::RetryPolicy> retry_policy_;
   std::shared_ptr<NullRouteImpl> route_;
   uint32_t high_watermark_calls_{};
   bool local_closed_{};
@@ -275,6 +284,8 @@ private:
   Buffer::InstancePtr buffered_body_;
   Buffer::BufferMemoryAccountSharedPtr account_{nullptr};
   absl::optional<uint32_t> buffer_limit_{absl::nullopt};
+  RequestHeaderMap* request_headers_{};
+  RequestTrailerMap* request_trailers_{};
   bool encoded_response_headers_{};
   bool is_grpc_request_{};
   bool is_head_request_{false};

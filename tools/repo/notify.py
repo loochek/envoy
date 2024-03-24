@@ -9,6 +9,7 @@
 
 import datetime
 import html
+import icalendar
 import json
 import os
 import sys
@@ -26,46 +27,68 @@ from aio.run import runner
 
 ENVOY_REPO = "envoyproxy/envoy"
 
+# Oncall calendar
+CALENDAR = "https://calendar.google.com/calendar/ical/d6glc0l5rc3v235q9l2j29dgovh3dn48%40import.calendar.google.com/public/basic.ics"
+
 ISSUE_LINK = "https://github.com/envoyproxy/envoy/issues?q=is%3Aissue+is%3Aopen+label%3Atriage"
 SLACK_EXPORT_URL = "https://api.slack.com/apps/A023NPQQ33K/oauth?"
 
+OPSGENIE_TO_SLACK = {
+    'Adi': 'UT17EMMTP',
+    'Alyssa': 'U78RP48V9',
+    'Greg': 'U78MBV869',
+    'Harvey': 'U78E7055Z',
+    'Joshua': 'U80HPLBPG',
+    'Kevin': 'U016ZPU8KBK',
+    'Keith': 'UGS5P90CF',
+    'kuat': 'U7KTRAA8M',
+    'Lizan': 'U79E51EQ6',
+    'Matt': 'U5CALEVSL',
+    'Kateryna': 'UDYUWRL13',
+    'phlax': 'U017PLM0GNQ',
+    'Raven': 'U02MJHFEX35',
+    'Ryan': 'U01SW3JC8GP',
+    'Hejie': 'U01GNQ3B8AY',
+    'Baiping': 'U017KF5C0Q6',
+    'Yan': 'UJHLR5KFS',
+    'Stephan': 'U78J72Q82',
+}
+
 MAINTAINERS = {
+    'adisuissa': 'UT17EMMTP',
     'alyssawilk': 'U78RP48V9',
-    'mattklein123': 'U5CALEVSL',
-    'lizan': 'U79E51EQ6',
-    'snowp': 'U93KTPQP6',
     'ggreenway': 'U78MBV869',
     'htuch': 'U78E7055Z',
-    'zuercher': 'U78J72Q82',
-    'phlax': 'U017PLM0GNQ',
     'jmarantz': 'U80HPLBPG',
-    'ravenblackx': 'U02MJHFEX35',
-    'yanavlasov': 'UJHLR5KFS',
-    'RyanTheOptimist': 'U01SW3JC8GP',
-    'adisuissa': 'UT17EMMTP',
     'KBaichoo': 'U016ZPU8KBK',
-    'wbpcode': 'U017KF5C0Q6',
-    'kyessenov': 'U7KTRAA8M',
     'keith': 'UGS5P90CF',
-    'abeyad': 'U03CVM7GPM1',
+    'kyessenov': 'U7KTRAA8M',
+    'lizan': 'U79E51EQ6',
+    'mattklein123': 'U5CALEVSL',
+    'nezdolik': 'UDYUWRL13',
+    'phlax': 'U017PLM0GNQ',
+    'ravenblackx': 'U02MJHFEX35',
+    'RyanTheOptimist': 'U01SW3JC8GP',
     'soulxu': 'U01GNQ3B8AY',
+    'wbpcode': 'U017KF5C0Q6',
+    'yanavlasov': 'UJHLR5KFS',
+    'zuercher': 'U78J72Q82',
 }
 
 # First pass reviewers who are not maintainers should get
 # notifications but not result in a PR not getting assigned a
 # maintainer owner.
 FIRST_PASS = {
-    'dmitri-d': 'UB1883Q5S',
-    'tonya11en': 'U989BG2CW',
-    'esmet': 'U01BCGBUUAE',
-    'mathetake': 'UG9TD2FSB',
+    'botengyao': 'U037YUAK147',
+    'daixiang0': 'U020CJG6UU8',
+    'silverstar194': 'U03LNPC8JN9',
+    'tyxia': 'U023U1ZN9SP',
 }
 
 # Only notify API reviewers who aren't maintainers.
 # Maintainers are already notified of pending PRs.
 API_REVIEWERS = {
     'markdroth': 'UMN8K55A6',
-    'adisuissa': 'UT17EMMTP',
 }
 
 
@@ -94,6 +117,7 @@ class RepoNotifier(runner.Runner):
                 pull["draft"] or pull["user"]["login"] == "dependabot[bot]"
                 or self.is_waiting(pull))
             if skip:
+                self.log.notice(f"Skipping {pull['title']} {pull['url']}")
                 continue
             yield pull
 
@@ -130,6 +154,32 @@ class RepoNotifier(runner.Runner):
     @async_property(cache=True)
     async def stalled_prs(self):
         return (await self.tracked_prs)["stalled_prs"]
+
+    @async_property(cache=True)
+    async def oncall_string(self):
+        response = await self.session.get(CALENDAR)
+        content = await response.read()
+        parsed_calendar = icalendar.Calendar.from_ical(content)
+
+        now = datetime.datetime.now()
+        sunday = now - datetime.timedelta(days=now.weekday() + 1)
+
+        for component in parsed_calendar.walk():
+            if component.name == "VEVENT":
+                if (sunday.date() == component.decoded("dtstart").date()):
+                    return component.get("summary")
+        return "unable to find this week's oncall"
+
+    @async_property
+    async def oncall_slack_handle(self):
+        opsgenie_string = await self.oncall_string
+        # Snag the first name from the "oncall transitioning to" entry.
+        opsgenie_name = opsgenie_string.split(' ', 1)[0]
+        # Check that the name is in the OPSGENIE_TO_SLACK list, else cc alyssa.
+        if not (uid := OPSGENIE_TO_SLACK.get(opsgenie_name)):
+            print("could not find", opsgenie_name)
+            return OPSGENIE_TO_SLACK.get('Alyssa')
+        return uid
 
     @async_property(cache=True)
     async def tracked_prs(self):
@@ -230,16 +280,30 @@ class RepoNotifier(runner.Runner):
         try:
             unassigned = "\n".join(await self.unassigned_prs)
             stalled = "\n".join(await self.stalled_prs)
+            oncall_handle = await self.oncall_slack_handle
+            # On Monday, post the new oncall.
+            if datetime.date.today().weekday() == 0:
+                oncall = await self.oncall_string
+                await self.send_message(channel='#envoy-maintainer-oncall', text=(f"{oncall}"))
+                await self.send_message(channel='#general', text=(f"{oncall}"))
+            await self.send_message(
+                channel='#envoy-maintainer-oncall', text=(f"Oncall now <@{oncall_handle}>"))
             await self.send_message(
                 channel='#envoy-maintainer-oncall',
                 text=(f"*'Unassigned' PRs* (PRs with no maintainer assigned)\n{unassigned}"))
             await self.send_message(
                 channel='#envoy-maintainer-oncall',
                 text=(f"*Stalled PRs* (PRs with review out-SLO, please address)\n{stalled}"))
+            num_issues = await self.track_open_issues()
             await self.send_message(
                 channel='#envoy-maintainer-oncall',
                 text=(
-                    f"*Untriaged Issues* (please tag and cc area experts)\n<{ISSUE_LINK}|{ISSUE_LINK}>"
+                    f"*{num_issues} Untriaged Issues* (please tag and cc area experts)\n<{ISSUE_LINK}|{ISSUE_LINK}>"
+                ))
+            await self.send_message(
+                channel='#envoy-ci',
+                text=(
+                    f"<@{oncall_handle}> please triage flakes per <https://shorturl.at/acDH1 | instructions>"
                 ))
         except SlackApiError as e:
             self.log.error(f"Unexpected error {e.response['error']}")
@@ -252,6 +316,11 @@ class RepoNotifier(runner.Runner):
         return (
             f"<{pull['html_url']}|{html.escape(pull['title'])}> has been waiting "
             f"{markup}{days} days {hours} hours{markup}")
+
+    async def track_open_issues(self):
+        response = await self.session.get(
+            "https://api.github.com/repos/envoyproxy/envoy/issues?labels=triage")
+        return len(await response.json())
 
     async def run(self):
         if not self.github_token:
@@ -279,8 +348,8 @@ class RepoNotifier(runner.Runner):
         print(json.dumps(report))
 
     async def send_message(self, channel, text):
+        self.log.notice(f"Slack message ({channel}):\n{text}")
         if self.dry_run:
-            self.log.notice(f"Slack message ({channel}):\n{text}")
             return
         await self.slack_client.chat_postMessage(channel=channel, text=text)
 
@@ -290,8 +359,8 @@ class RepoNotifier(runner.Runner):
             if not (uid := assignees.get(name)):
                 continue
             message = "\n".join(text)
+            self.log.notice(f"Slack message ({name}):\n{message}")
             if self.dry_run:
-                self.log.notice(f"Slack message ({name}):\n{message}")
                 continue
             # Ship texts off to slack.
             try:

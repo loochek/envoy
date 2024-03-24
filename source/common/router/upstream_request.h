@@ -61,12 +61,15 @@ class UpstreamCodecFilter;
  * There is some required communication between the UpstreamRequest and
  * UpstreamCodecFilter. This is accomplished via the UpstreamStreamFilterCallbacks
  * interface, with the UpstreamFilterManager acting as intermediary.
+ *
+ * UpstreamRequest is marked as final because no subclasses are expected.
+ * This class is intended to be used as-is without any specialized inheritance.
  */
-class UpstreamRequest : public Logger::Loggable<Logger::Id::router>,
-                        public UpstreamToDownstream,
-                        public LinkedObject<UpstreamRequest>,
-                        public GenericConnectionPoolCallbacks,
-                        public Event::DeferredDeletable {
+class UpstreamRequest final : public Logger::Loggable<Logger::Id::router>,
+                              public UpstreamToDownstream,
+                              public LinkedObject<UpstreamRequest>,
+                              public GenericConnectionPoolCallbacks,
+                              public Event::DeferredDeletable {
 public:
   UpstreamRequest(RouterFilterInterface& parent, std::unique_ptr<GenericConnPool>&& conn_pool,
                   bool can_send_early_data, bool can_use_http3);
@@ -84,7 +87,7 @@ public:
   void resetStream();
   void setupPerTryTimeout();
   void maybeEndDecode(bool end_stream);
-  void onUpstreamHostSelected(Upstream::HostDescriptionConstSharedPtr host);
+  void onUpstreamHostSelected(Upstream::HostDescriptionConstSharedPtr host, bool pool_success);
 
   // Http::StreamDecoder
   void decodeData(Buffer::Instance& data, bool end_stream) override;
@@ -342,10 +345,10 @@ public:
 
   // Unsupported functions.
   void recreateStream(StreamInfo::FilterStateSharedPtr) override {
-    IS_ENVOY_BUG("recreateStream called from upstream filter");
+    IS_ENVOY_BUG("recreateStream called from upstream HTTP filter");
   }
   void upgradeFilterChainCreated() override {
-    IS_ENVOY_BUG("upgradeFilterChainCreated called from upstream filter");
+    IS_ENVOY_BUG("upgradeFilterChainCreated called from upstream HTTP filter");
   }
   OptRef<UpstreamStreamFilterCallbacks> upstreamCallbacks() override { return {*this}; }
 

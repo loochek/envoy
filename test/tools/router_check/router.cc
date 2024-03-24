@@ -36,6 +36,8 @@ const std::string toString(envoy::type::matcher::v3::StringMatcher::MatchPattern
     return "safe_regex";
   case envoy::type::matcher::v3::StringMatcher::MatchPatternCase::kContains:
     return "contains";
+  case envoy::type::matcher::v3::StringMatcher::MatchPatternCase::kCustom:
+    return "custom";
   case envoy::type::matcher::v3::StringMatcher::MatchPatternCase::MATCH_PATTERN_NOT_SET:
     return "match_pattern_not_set";
   }
@@ -136,8 +138,7 @@ RouterCheckTool RouterCheckTool::create(const std::string& router_config_file,
   auto factory_context =
       std::make_unique<NiceMock<Server::Configuration::MockServerFactoryContext>>();
   auto config = std::make_unique<Router::ConfigImpl>(
-      route_config, Router::OptionalHttpFilters(), *factory_context,
-      ProtobufMessage::getNullValidationVisitor(), false);
+      route_config, *factory_context, ProtobufMessage::getNullValidationVisitor(), false);
   if (!disable_deprecation_check) {
     ProtobufMessage::StrictValidationVisitorImpl visitor;
     visitor.setRuntime(factory_context->runtime_loader_);
@@ -529,7 +530,7 @@ bool RouterCheckTool::matchHeaderField(
     const HeaderMap& header_map, const envoy::config::route::v3::HeaderMatcher& header,
     const std::string test_type,
     envoy::RouterCheckToolSchema::HeaderMatchFailure& header_match_failure) {
-  Envoy::Http::HeaderUtility::HeaderData expected_header_data{header};
+  Envoy::Http::HeaderUtility::HeaderData expected_header_data{header, *factory_context_};
   if (Envoy::Http::HeaderUtility::matchHeaders(header_map, expected_header_data)) {
     return true;
   }

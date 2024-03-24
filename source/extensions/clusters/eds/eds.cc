@@ -9,6 +9,7 @@
 #include "source/common/common/utility.h"
 #include "source/common/config/api_version.h"
 #include "source/common/config/decoded_resource_impl.h"
+#include "source/common/grpc/common.h"
 
 namespace Envoy {
 namespace Upstream {
@@ -50,7 +51,8 @@ void EdsClusterImpl::startPreInit() { subscription_->start({edsServiceName()}); 
 
 void EdsClusterImpl::BatchUpdateHelper::batchUpdate(PrioritySet::HostUpdateCb& host_update_cb) {
   absl::flat_hash_set<std::string> all_new_hosts;
-  PriorityStateManager priority_state_manager(parent_, parent_.local_info_, &host_update_cb);
+  PriorityStateManager priority_state_manager(parent_, parent_.local_info_, &host_update_cb,
+                                              parent_.random_);
   for (const auto& locality_lb_endpoint : cluster_load_assignment_.endpoints()) {
     parent_.validateEndpointsForZoneAwareRouting(locality_lb_endpoint);
 
@@ -214,6 +216,12 @@ EdsClusterImpl::onConfigUpdate(const std::vector<Config::DecodedResourceRef>& re
     }
   }
 
+  // Drop overload configuration parsing.
+  absl::Status status = parseDropOverloadConfig(cluster_load_assignment);
+  if (!status.ok()) {
+    return status;
+  }
+
   // Pause LEDS messages until the EDS config is finished processing.
   Config::ScopedResume maybe_resume_leds;
   if (transport_factory_context_->clusterManager().adsMux()) {
@@ -364,9 +372,10 @@ void EdsClusterImpl::reloadHealthyHostsHelper(const HostSharedPtr& host) {
     HostsPerLocalityConstSharedPtr hosts_per_locality_copy = host_set->hostsPerLocality().filter(
         {[&host_to_exclude](const Host& host) { return &host != host_to_exclude.get(); }})[0];
 
-    prioritySet().updateHosts(
-        priority, HostSetImpl::partitionHosts(hosts_copy, hosts_per_locality_copy),
-        host_set->localityWeights(), {}, hosts_to_remove, absl::nullopt, absl::nullopt);
+    prioritySet().updateHosts(priority,
+                              HostSetImpl::partitionHosts(hosts_copy, hosts_per_locality_copy),
+                              host_set->localityWeights(), {}, hosts_to_remove, random_.random(),
+                              absl::nullopt, absl::nullopt);
   }
 }
 

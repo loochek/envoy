@@ -126,6 +126,7 @@ envoy_cc_test(
     external_deps = ["abseil_optional"],
     deps = [
         "//source/common/config:api_version_lib",
+        "//source/common/config:stats_utility_lib",
         "//source/common/config:utility_lib",
         "//source/common/config:well_known_names",
         "//source/common/stats:stats_lib",
@@ -138,8 +139,8 @@ envoy_cc_test(
         "//test/test_common:environment_lib",
         "//test/test_common:logging_lib",
         "//test/test_common:utility_lib",
-        "@com_github_cncf_udpa//udpa/type/v1:pkg_cc_proto",
-        "@com_github_cncf_udpa//xds/type/v3:pkg_cc_proto",
+        "@com_github_cncf_xds//udpa/type/v1:pkg_cc_proto",
+        "@com_github_cncf_xds//xds/type/v3:pkg_cc_proto",
         "@envoy_api//envoy/api/v2:pkg_cc_proto",
         "@envoy_api//envoy/config/bootstrap/v3:pkg_cc_proto",
         "@envoy_api//envoy/config/cluster/v3:pkg_cc_proto",

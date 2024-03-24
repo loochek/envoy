@@ -10,6 +10,7 @@
 
 #include "test/extensions/filters/common/ext_authz/mocks.h"
 #include "test/extensions/filters/common/ext_authz/test_common.h"
+#include "test/mocks/server/server_factory_context.h"
 #include "test/mocks/stream_info/mocks.h"
 #include "test/mocks/upstream/cluster_manager.h"
 
@@ -90,7 +91,7 @@ public:
     }
 
     cm_.initializeThreadLocalClusters({"ext_authz"});
-    return std::make_shared<ClientConfig>(proto_config, timeout, path_prefix);
+    return std::make_shared<ClientConfig>(proto_config, timeout, path_prefix, factory_context_);
   }
 
   void dynamicMetadataTest(CheckStatus status, const std::string& http_status) {
@@ -178,6 +179,7 @@ public:
     return message_ptr;
   }
 
+  NiceMock<Server::Configuration::MockServerFactoryContext> factory_context_;
   NiceMock<Upstream::MockClusterManager> cm_;
   NiceMock<Http::MockAsyncClient> async_client_;
   NiceMock<Http::MockAsyncClientRequest> async_request_;
@@ -374,7 +376,7 @@ TEST_F(ExtAuthzHttpClientTest, AuthorizationOkWithAddedAuthzHeadersFromStreamInf
                           expected_header.second);
 
   StreamInfo::MockStreamInfo stream_info;
-  EXPECT_CALL(stream_info, getRequestHeaders()).Times(2).WillRepeatedly(Return(&request_headers));
+  EXPECT_CALL(stream_info, getRequestHeaders()).WillOnce(Return(&request_headers));
 
   envoy::service::auth::v3::CheckRequest request;
   client_->check(request_callbacks_, request, parent_span_, stream_info);

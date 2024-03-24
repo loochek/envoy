@@ -1,7 +1,10 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
+load("@envoy//bazel:envoy_build_system.bzl", "envoy_mobile_package")
 load("@rules_java//java:defs.bzl", "java_library")
 
 licenses(["notice"])  # Apache 2
+
+envoy_mobile_package()
 
 android_library(
     name = "envoy_engine_lib",
@@ -27,6 +30,7 @@ android_library(
 java_library(
     name = "envoy_base_engine_lib",
     srcs = [
+        "ByteBuffers.java",
         "EnvoyConfiguration.java",
         "EnvoyEngine.java",
         "EnvoyEngineImpl.java",
@@ -52,6 +56,7 @@ java_library(
     deps = [
         "//library/java/io/envoyproxy/envoymobile/engine/types:envoy_c_types_lib",
         "@maven//:com_google_code_findbugs_jsr305",
+        "@maven//:com_google_protobuf_protobuf_javalite",
     ],
 )
 

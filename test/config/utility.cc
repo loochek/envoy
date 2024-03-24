@@ -832,9 +832,10 @@ void ConfigHelper::setConnectConfig(
     match->mutable_connect_matcher();
   }
 
+  auto* upgrade = route->mutable_route()->add_upgrade_configs();
+  upgrade->set_upgrade_type("CONNECT");
+
   if (terminate_connect) {
-    auto* upgrade = route->mutable_route()->add_upgrade_configs();
-    upgrade->set_upgrade_type("CONNECT");
     auto* config = upgrade->mutable_connect_config();
     if (allow_post) {
       config->set_allow_post(true);
@@ -862,9 +863,11 @@ void ConfigHelper::setConnectUdpConfig(
   match->Clear();
   match->mutable_connect_matcher();
 
+  auto* upgrade = route->mutable_route()->add_upgrade_configs();
+  upgrade->set_upgrade_type("connect-udp");
+
   if (terminate_connect) {
-    auto* upgrade = route->mutable_route()->add_upgrade_configs();
-    upgrade->set_upgrade_type("connect-udp");
+    upgrade->mutable_connect_config();
   }
 
   hcm.add_upgrade_configs()->set_upgrade_type("connect-udp");
@@ -1310,7 +1313,7 @@ void ConfigHelper::addSslConfig(const ServerSslOptions& options) {
   auto* filter_chain =
       bootstrap_.mutable_static_resources()->mutable_listeners(0)->mutable_filter_chains(0);
   envoy::extensions::transport_sockets::tls::v3::DownstreamTlsContext tls_context;
-  initializeTls(options, *tls_context.mutable_common_tls_context());
+  initializeTls(options, *tls_context.mutable_common_tls_context(), false);
   if (options.ocsp_staple_required_) {
     tls_context.set_ocsp_staple_policy(
         envoy::extensions::transport_sockets::tls::v3::DownstreamTlsContext::MUST_STAPLE);
@@ -1319,7 +1322,8 @@ void ConfigHelper::addSslConfig(const ServerSslOptions& options) {
   filter_chain->mutable_transport_socket()->mutable_typed_config()->PackFrom(tls_context);
 }
 
-void ConfigHelper::addQuicDownstreamTransportSocketConfig(bool enable_early_data) {
+void ConfigHelper::addQuicDownstreamTransportSocketConfig(
+    bool enable_early_data, std::vector<absl::string_view> custom_alpns) {
   for (auto& listener : *bootstrap_.mutable_static_resources()->mutable_listeners()) {
     if (listener.udp_listener_config().has_quic_options()) {
       // Disable SO_REUSEPORT, because it undesirably allows parallel test jobs to use the same
@@ -1329,8 +1333,12 @@ void ConfigHelper::addQuicDownstreamTransportSocketConfig(bool enable_early_data
   }
   configDownstreamTransportSocketWithTls(
       bootstrap_,
-      [](envoy::extensions::transport_sockets::tls::v3::CommonTlsContext& common_tls_context) {
-        initializeTls(ServerSslOptions().setRsaCert(true).setTlsV13(true), common_tls_context);
+      [&](envoy::extensions::transport_sockets::tls::v3::CommonTlsContext& common_tls_context) {
+        initializeTls(ServerSslOptions().setRsaCert(true).setTlsV13(true), common_tls_context,
+                      true);
+        for (absl::string_view alpn : custom_alpns) {
+          common_tls_context.add_alpn_protocols(alpn);
+        }
       },
       enable_early_data);
 }
@@ -1447,9 +1455,14 @@ void ConfigHelper::initializeTlsKeyLog(
 
 void ConfigHelper::initializeTls(
     const ServerSslOptions& options,
-    envoy::extensions::transport_sockets::tls::v3::CommonTlsContext& common_tls_context) {
-  common_tls_context.add_alpn_protocols(Http::Utility::AlpnNames::get().Http2);
-  common_tls_context.add_alpn_protocols(Http::Utility::AlpnNames::get().Http11);
+    envoy::extensions::transport_sockets::tls::v3::CommonTlsContext& common_tls_context,
+    bool http3) {
+  if (!http3) {
+    // If it's HTTP/3, leave it empty as QUIC will derive the supported ALPNs from QUIC version by
+    // default.
+    common_tls_context.add_alpn_protocols(Http::Utility::AlpnNames::get().Http2);
+    common_tls_context.add_alpn_protocols(Http::Utility::AlpnNames::get().Http11);
+  }
 
   auto* validation_context = common_tls_context.mutable_validation_context();
   if (options.custom_validator_config_) {
@@ -1702,7 +1715,7 @@ void ConfigHelper::adjustUpstreamTimeoutForTsan(
   auto* timeout = route->mutable_timeout();
   // QUIC stream processing is slow under TSAN. Use larger timeout to prevent
   // response_timeout.
-  timeout->set_seconds(TSAN_TIMEOUT_FACTOR * timeout_ms / 1000);
+  timeout->set_seconds(TIMEOUT_FACTOR * timeout_ms / 1000);
 }
 
 envoy::config::core::v3::Http3ProtocolOptions ConfigHelper::http2ToHttp3ProtocolOptions(

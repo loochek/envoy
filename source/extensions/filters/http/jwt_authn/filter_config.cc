@@ -15,7 +15,8 @@ FilterConfigImpl::FilterConfigImpl(
     envoy::extensions::filters::http::jwt_authn::v3::JwtAuthentication proto_config,
     const std::string& stats_prefix, Server::Configuration::FactoryContext& context)
     : proto_config_(std::move(proto_config)), stats_(generateStats(stats_prefix, context.scope())),
-      cm_(context.clusterManager()), time_source_(context.mainThreadDispatcher().timeSource()) {
+      cm_(context.serverFactoryContext().clusterManager()),
+      time_source_(context.serverFactoryContext().mainThreadDispatcher().timeSource()) {
 
   ENVOY_LOG(debug, "Loaded JwtAuthConfig: {}", proto_config_.DebugString());
 
@@ -35,7 +36,7 @@ FilterConfigImpl::FilterConfigImpl(
     switch (rule.requirement_type_case()) {
     case RequirementRule::RequirementTypeCase::kRequires:
       rule_pairs_.emplace_back(
-          Matcher::create(rule),
+          Matcher::create(rule, context.serverFactoryContext()),
           Verifier::create(rule.requires_(), proto_config_.providers(), *this));
       break;
     case RequirementRule::RequirementTypeCase::kRequirementName: {
@@ -45,11 +46,11 @@ FilterConfigImpl::FilterConfigImpl(
         throw EnvoyException(fmt::format("Wrong requirement_name: {}. It should be one of [{}]",
                                          rule.requirement_name(), all_requirement_names_));
       }
-      rule_pairs_.emplace_back(Matcher::create(rule),
+      rule_pairs_.emplace_back(Matcher::create(rule, context.serverFactoryContext()),
                                Verifier::create(map_it->second, proto_config_.providers(), *this));
     } break;
     case RequirementRule::RequirementTypeCase::REQUIREMENT_TYPE_NOT_SET:
-      rule_pairs_.emplace_back(Matcher::create(rule), nullptr);
+      rule_pairs_.emplace_back(Matcher::create(rule, context.serverFactoryContext()), nullptr);
       break;
     }
   }

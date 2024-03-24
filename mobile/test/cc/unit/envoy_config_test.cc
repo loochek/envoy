@@ -1,8 +1,15 @@
+#include <sys/socket.h>
+
 #include <string>
 #include <vector>
 
+#include "envoy/config/cluster/v3/cluster.pb.h"
+#include "envoy/config/core/v3/socket_option.pb.h"
+#include "envoy/extensions/clusters/dynamic_forward_proxy/v3/cluster.pb.h"
+
 #include "test/test_common/utility.h"
 
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/synchronization/notification.h"
 #include "gtest/gtest.h"
@@ -15,29 +22,43 @@
 #include "source/extensions/network/dns_resolver/apple/apple_dns_impl.h"
 #endif
 
-using envoy::config::bootstrap::v3::Bootstrap;
-using testing::HasSubstr;
-using testing::IsEmpty;
-using testing::Not;
-using testing::SizeIs;
-
 namespace Envoy {
 namespace {
 
 using namespace Platform;
 
+using envoy::config::bootstrap::v3::Bootstrap;
+using envoy::config::cluster::v3::Cluster;
+using envoy::config::core::v3::SocketOption;
+using DfpClusterConfig = ::envoy::extensions::clusters::dynamic_forward_proxy::v3::ClusterConfig;
+using testing::HasSubstr;
+using testing::IsEmpty;
+using testing::Not;
+using testing::NotNull;
+using testing::SizeIs;
+
+DfpClusterConfig getDfpClusterConfig(const Bootstrap& bootstrap) {
+  DfpClusterConfig cluster_config;
+  const auto& clusters = bootstrap.static_resources().clusters();
+  for (const auto& cluster : clusters) {
+    if (cluster.name() == "base") {
+      MessageUtil::unpackTo(cluster.cluster_type().typed_config(), cluster_config);
+    }
+  }
+  return cluster_config;
+}
+
 TEST(TestConfig, ConfigIsApplied) {
   EngineBuilder engine_builder;
   engine_builder
-#ifdef ENVOY_MOBILE_STATS_REPORTING
-      .addGrpcStatsDomain("asdf.fake.website")
-      .addStatsFlushSeconds(654)
-#endif
 #ifdef ENVOY_ENABLE_QUIC
       .setHttp3ConnectionOptions("5RTO")
       .setHttp3ClientConnectionOptions("MPQC")
       .addQuicHint("www.abc.com", 443)
       .addQuicHint("www.def.com", 443)
+      .addQuicCanonicalSuffix(".opq.com")
+      .addQuicCanonicalSuffix(".xyz.com")
+      .enablePortMigration(true)
 #endif
       .addConnectTimeoutSeconds(123)
       .addDnsRefreshSeconds(456)
@@ -65,19 +86,20 @@ TEST(TestConfig, ConfigIsApplied) {
       "dns_failure_refresh_rate { base_interval { seconds: 789 } max_interval { seconds: 987 } }",
       "connection_idle_interval { nanos: 222000000 }",
       "connection_keepalive { timeout { seconds: 333 }",
-#ifdef ENVOY_MOBILE_STATS_REPORTING
-      "asdf.fake.website",
-      "stats_flush_interval { seconds: 654 }",
-#endif
 #ifdef ENVOY_ENABLE_QUIC
       "connection_options: \"5RTO\"",
       "client_connection_options: \"MPQC\"",
       "hostname: \"www.abc.com\"",
       "hostname: \"www.def.com\"",
+      "canonical_suffixes: \".opq.com\"",
+      "canonical_suffixes: \".xyz.com\"",
+      "num_timeouts_to_trigger_port_migration { value: 4 }",
+      "idle_network_timeout { seconds: 30 }",
 #endif
       "key: \"dns_persistent_cache\" save_interval { seconds: 101 }",
       "key: \"always_use_v6\" value { bool_value: true }",
       "key: \"test_feature_false\" value { bool_value: true }",
+      "key: \"allow_client_socket_creation_failure\" value { bool_value: true }",
       "key: \"device_os\" value { string_value: \"probably-ubuntu-on-CI\" } }",
       "key: \"app_version\" value { string_value: \"1.2.3\" } }",
       "key: \"app_id\" value { string_value: \"1234-1234-1234\" } }",
@@ -228,27 +250,34 @@ TEST(TestConfig, AddMaxConnectionsPerHost) {
   EXPECT_THAT(bootstrap->ShortDebugString(), HasSubstr("max_connections { value: 16 }"));
 }
 
-#ifdef ENVOY_MOBILE_STATS_REPORTING
-std::string statsdSinkConfig(int port) {
-  std::string config = R"({ name: envoy.stat_sinks.statsd,
-      typed_config: {
-        "@type": type.googleapis.com/envoy.config.metrics.v3.StatsdSink,
-        address: { socket_address: { address: 127.0.0.1, port_value: )" +
-                       fmt::format("{}", port) + " } } } }";
-  return config;
-}
-
-TEST(TestConfig, AddStatsSinks) {
+TEST(TestConfig, AddDnsPreresolveHostnames) {
   EngineBuilder engine_builder;
-
+  engine_builder.addDnsPreresolveHostnames({"google.com", "lyft.com"});
   std::unique_ptr<Bootstrap> bootstrap = engine_builder.generateBootstrap();
-  EXPECT_EQ(bootstrap->stats_sinks_size(), 0);
 
-  engine_builder.addStatsSinks({statsdSinkConfig(1), statsdSinkConfig(2)});
+  Protobuf::RepeatedPtrField<envoy::config::core::v3::SocketAddress>
+      expected_dns_preresolve_hostnames;
+  auto& host_addr1 = *expected_dns_preresolve_hostnames.Add();
+  host_addr1.set_address("google.com");
+  host_addr1.set_port_value(443);
+  auto& host_addr2 = *expected_dns_preresolve_hostnames.Add();
+  host_addr2.set_address("lyft.com");
+  host_addr2.set_port_value(443);
+  EXPECT_TRUE(TestUtility::repeatedPtrFieldEqual(
+      getDfpClusterConfig(*bootstrap).dns_cache_config().preresolve_hostnames(),
+      expected_dns_preresolve_hostnames));
+
+  // Resetting the DNS preresolve hostnames with just "google.com" now.
+  engine_builder.addDnsPreresolveHostnames({"google.com"});
   bootstrap = engine_builder.generateBootstrap();
-  EXPECT_EQ(bootstrap->stats_sinks_size(), 2);
+  expected_dns_preresolve_hostnames.Clear();
+  auto& host_addr3 = *expected_dns_preresolve_hostnames.Add();
+  host_addr3.set_address("google.com");
+  host_addr3.set_port_value(443);
+  EXPECT_TRUE(TestUtility::repeatedPtrFieldEqual(
+      getDfpClusterConfig(*bootstrap).dns_cache_config().preresolve_hostnames(),
+      expected_dns_preresolve_hostnames));
 }
-#endif
 
 TEST(TestConfig, DisableHttp3) {
   EngineBuilder engine_builder;
@@ -273,99 +302,84 @@ TEST(TestConfig, DisableHttp3) {
 #endif
 }
 
-#ifdef ENVOY_GOOGLE_GRPC
+#ifdef ENVOY_ENABLE_QUIC
+TEST(TestConfig, SocketReceiveBufferSize) {
+  EngineBuilder engine_builder;
+  engine_builder.enableHttp3(true);
+
+  std::unique_ptr<Bootstrap> bootstrap = engine_builder.generateBootstrap();
+  Cluster const* base_cluster = nullptr;
+  for (const Cluster& cluster : bootstrap->static_resources().clusters()) {
+    if (cluster.name() == "base") {
+      base_cluster = &cluster;
+      break;
+    }
+  }
+
+  // The base H3 cluster should always be found.
+  ASSERT_THAT(base_cluster, NotNull());
+
+  SocketOption const* rcv_buf_option = nullptr;
+  for (const SocketOption& sock_opt : base_cluster->upstream_bind_config().socket_options()) {
+    if (sock_opt.name() == SO_RCVBUF) {
+      rcv_buf_option = &sock_opt;
+      break;
+    }
+  }
+
+  // When using an H3 cluster, the UDP receive buffer size option should always be set.
+  ASSERT_THAT(rcv_buf_option, NotNull());
+  EXPECT_EQ(rcv_buf_option->level(), SOL_SOCKET);
+  EXPECT_EQ(rcv_buf_option->int_value(), 1024 * 1024 /* 1 MB */);
+}
+#endif
+
+#ifdef ENVOY_MOBILE_XDS
 TEST(TestConfig, XdsConfig) {
   EngineBuilder engine_builder;
-  XdsBuilder xds_builder(/*xds_server_address=*/"fake-td.googleapis.com",
-                         /*xds_server_port=*/12345);
+  const std::string host = "fake-td.googleapis.com";
+  const uint32_t port = 12345;
+  const std::string authority = absl::StrCat(host, ":", port);
+
+  XdsBuilder xds_builder(/*xds_server_address=*/host,
+                         /*xds_server_port=*/port);
   engine_builder.setXds(std::move(xds_builder));
   std::unique_ptr<Bootstrap> bootstrap = engine_builder.generateBootstrap();
+
   auto& ads_config = bootstrap->dynamic_resources().ads_config();
   EXPECT_EQ(ads_config.api_type(), envoy::config::core::v3::ApiConfigSource::GRPC);
-  EXPECT_EQ(ads_config.grpc_services(0).google_grpc().target_uri(), "fake-td.googleapis.com:12345");
-  EXPECT_EQ(ads_config.grpc_services(0).google_grpc().stat_prefix(), "ads");
-  EXPECT_THAT(ads_config.grpc_services(0)
-                  .google_grpc()
-                  .channel_credentials()
-                  .ssl_credentials()
-                  .root_certs()
-                  .inline_string(),
-              IsEmpty());
-  EXPECT_THAT(ads_config.grpc_services(0).google_grpc().call_credentials(), SizeIs(0));
+  EXPECT_EQ(ads_config.grpc_services(0).envoy_grpc().cluster_name(), "base");
+  EXPECT_EQ(ads_config.grpc_services(0).envoy_grpc().authority(), authority);
 
-  // With authentication credentials.
-  xds_builder =
-      XdsBuilder(/*xds_server_address=*/"fake-td.googleapis.com", /*xds_server_port=*/12345);
-  xds_builder.setAuthenticationToken(/*header=*/"x-goog-api-key", /*token=*/"A1B2C3");
-  xds_builder.setSslRootCerts(/*root_certs=*/"my_root_cert");
-  xds_builder.setSni(/*sni=*/"fake-td.googleapis.com");
+  Protobuf::RepeatedPtrField<envoy::config::core::v3::SocketAddress>
+      expected_dns_preresolve_hostnames;
+  auto& host_addr1 = *expected_dns_preresolve_hostnames.Add();
+  host_addr1.set_address(host);
+  host_addr1.set_port_value(port);
+  EXPECT_TRUE(TestUtility::repeatedPtrFieldEqual(
+      getDfpClusterConfig(*bootstrap).dns_cache_config().preresolve_hostnames(),
+      expected_dns_preresolve_hostnames));
+
+  // With initial gRPC metadata.
+  xds_builder = XdsBuilder(/*xds_server_address=*/host, /*xds_server_port=*/port);
+  xds_builder.addInitialStreamHeader(/*header=*/"x-goog-api-key", /*value=*/"A1B2C3")
+      .addInitialStreamHeader(/*header=*/"x-android-package",
+                              /*value=*/"com.google.envoymobile.io.myapp");
   engine_builder.setXds(std::move(xds_builder));
   bootstrap = engine_builder.generateBootstrap();
-  auto& ads_config_with_tokens = bootstrap->dynamic_resources().ads_config();
-  EXPECT_EQ(ads_config_with_tokens.api_type(), envoy::config::core::v3::ApiConfigSource::GRPC);
-  EXPECT_EQ(ads_config_with_tokens.grpc_services(0).google_grpc().target_uri(),
-            "fake-td.googleapis.com:12345");
-  EXPECT_EQ(ads_config_with_tokens.grpc_services(0).google_grpc().stat_prefix(), "ads");
-  EXPECT_EQ(ads_config_with_tokens.grpc_services(0)
-                .google_grpc()
-                .channel_credentials()
-                .ssl_credentials()
-                .root_certs()
-                .inline_string(),
-            "my_root_cert");
-  EXPECT_EQ(ads_config_with_tokens.grpc_services(0).initial_metadata(0).key(), "x-goog-api-key");
-  EXPECT_EQ(ads_config_with_tokens.grpc_services(0).initial_metadata(0).value(), "A1B2C3");
-  EXPECT_EQ(ads_config_with_tokens.grpc_services(0)
-                .google_grpc()
-                .channel_args()
-                .args()
-                .at("grpc.default_authority")
-                .string_value(),
-            "fake-td.googleapis.com");
-
-  // With JWT security credentials.
-  xds_builder =
-      XdsBuilder(/*xds_server_address=*/"fake-td.googleapis.com", /*xds_server_port=*/12345);
-  xds_builder.setJwtAuthenticationToken(/*token=*/"my_jwt_token",
-                                        /*token_lifetime_in_seconds=*/500);
-  xds_builder.setSslRootCerts(/*root_certs=*/"my_root_cert");
-  xds_builder.setSni(/*sni=*/"fake-td.googleapis.com");
-  engine_builder.setXds(std::move(xds_builder));
-  bootstrap = engine_builder.generateBootstrap();
-  auto& ads_config_with_jwt_tokens = bootstrap->dynamic_resources().ads_config();
-  EXPECT_EQ(ads_config_with_jwt_tokens.api_type(), envoy::config::core::v3::ApiConfigSource::GRPC);
-  EXPECT_EQ(ads_config_with_jwt_tokens.grpc_services(0).google_grpc().target_uri(),
-            "fake-td.googleapis.com:12345");
-  EXPECT_EQ(ads_config_with_jwt_tokens.grpc_services(0).google_grpc().stat_prefix(), "ads");
-  EXPECT_EQ(ads_config_with_jwt_tokens.grpc_services(0)
-                .google_grpc()
-                .channel_credentials()
-                .ssl_credentials()
-                .root_certs()
-                .inline_string(),
-            "my_root_cert");
-  EXPECT_EQ(ads_config_with_jwt_tokens.grpc_services(0)
-                .google_grpc()
-                .call_credentials(0)
-                .service_account_jwt_access()
-                .json_key(),
-            "my_jwt_token");
-  EXPECT_EQ(ads_config_with_jwt_tokens.grpc_services(0)
-                .google_grpc()
-                .call_credentials(0)
-                .service_account_jwt_access()
-                .token_lifetime_seconds(),
-            500);
-  EXPECT_EQ(ads_config_with_jwt_tokens.grpc_services(0)
-                .google_grpc()
-                .channel_args()
-                .args()
-                .at("grpc.default_authority")
-                .string_value(),
-            "fake-td.googleapis.com");
+  auto& ads_config_with_metadata = bootstrap->dynamic_resources().ads_config();
+  EXPECT_EQ(ads_config_with_metadata.api_type(), envoy::config::core::v3::ApiConfigSource::GRPC);
+  EXPECT_EQ(ads_config_with_metadata.grpc_services(0).envoy_grpc().cluster_name(), "base");
+  EXPECT_EQ(ads_config_with_metadata.grpc_services(0).envoy_grpc().authority(), authority);
+  EXPECT_EQ(ads_config_with_metadata.grpc_services(0).initial_metadata(0).key(), "x-goog-api-key");
+  EXPECT_EQ(ads_config_with_metadata.grpc_services(0).initial_metadata(0).value(), "A1B2C3");
+  EXPECT_EQ(ads_config_with_metadata.grpc_services(0).initial_metadata(1).key(),
+            "x-android-package");
+  EXPECT_EQ(ads_config_with_metadata.grpc_services(0).initial_metadata(1).value(),
+            "com.google.envoymobile.io.myapp");
 }
 
-TEST(TestConfig, CopyConstructor) {
+TEST(TestConfig, MoveConstructor) {
   EngineBuilder engine_builder;
   engine_builder.setRuntimeGuard("test_feature_false", true).enableGzipDecompression(false);
 
@@ -374,18 +388,18 @@ TEST(TestConfig, CopyConstructor) {
   EXPECT_THAT(bootstrap_str, HasSubstr("\"test_feature_false\" value { bool_value: true }"));
   EXPECT_THAT(bootstrap_str, Not(HasSubstr("envoy.filters.http.decompressor")));
 
-  EngineBuilder engine_builder_copy(engine_builder);
-  engine_builder_copy.enableGzipDecompression(true);
+  EngineBuilder engine_builder_move1(std::move(engine_builder));
+  engine_builder_move1.enableGzipDecompression(true);
   XdsBuilder xdsBuilder("FAKE_XDS_SERVER", 0);
   xdsBuilder.addClusterDiscoveryService();
-  engine_builder_copy.setXds(xdsBuilder);
-  bootstrap_str = engine_builder_copy.generateBootstrap()->ShortDebugString();
+  engine_builder_move1.setXds(xdsBuilder);
+  bootstrap_str = engine_builder_move1.generateBootstrap()->ShortDebugString();
   EXPECT_THAT(bootstrap_str, HasSubstr("\"test_feature_false\" value { bool_value: true }"));
   EXPECT_THAT(bootstrap_str, HasSubstr("envoy.filters.http.decompressor"));
   EXPECT_THAT(bootstrap_str, HasSubstr("FAKE_XDS_SERVER"));
 
-  EngineBuilder engine_builder_copy2(engine_builder_copy);
-  bootstrap_str = engine_builder_copy2.generateBootstrap()->ShortDebugString();
+  EngineBuilder engine_builder_move2(std::move(engine_builder_move1));
+  bootstrap_str = engine_builder_move2.generateBootstrap()->ShortDebugString();
   EXPECT_THAT(bootstrap_str, HasSubstr("\"test_feature_false\" value { bool_value: true }"));
   EXPECT_THAT(bootstrap_str, HasSubstr("envoy.filters.http.decompressor"));
   EXPECT_THAT(bootstrap_str, HasSubstr("FAKE_XDS_SERVER"));
@@ -471,7 +485,7 @@ TEST(TestConfig, DISABLED_StringAccessors) {
   std::string data_string = "envoy string";
   auto accessor = std::make_shared<TestStringAccessor>(data_string);
   engine_builder.addStringAccessor(name, accessor);
-  EngineSharedPtr engine = engine_builder.build();
+  Platform::EngineSharedPtr engine = engine_builder.build();
   auto c_accessor = static_cast<envoy_string_accessor*>(Envoy::Api::External::retrieveApi(name));
   ASSERT_TRUE(c_accessor != nullptr);
   EXPECT_EQ(0, accessor->count());
@@ -503,7 +517,20 @@ TEST(TestConfig, SetNodeLocality) {
   EXPECT_EQ(bootstrap->node().locality().sub_zone(), sub_zone);
 }
 
-#ifdef ENVOY_GOOGLE_GRPC
+TEST(TestConfig, SetNodeMetadata) {
+  ProtobufWkt::Struct node_metadata;
+  (*node_metadata.mutable_fields())["string_field"].set_string_value("some_string");
+  (*node_metadata.mutable_fields())["bool_field"].set_bool_value(true);
+  (*node_metadata.mutable_fields())["number_field"].set_number_value(3.14);
+  EngineBuilder engine_builder;
+  engine_builder.setNodeMetadata(node_metadata);
+  std::unique_ptr<Bootstrap> bootstrap = engine_builder.generateBootstrap();
+  EXPECT_EQ(bootstrap->node().metadata().fields().at("string_field").string_value(), "some_string");
+  EXPECT_EQ(bootstrap->node().metadata().fields().at("bool_field").bool_value(), true);
+  EXPECT_EQ(bootstrap->node().metadata().fields().at("number_field").number_value(), 3.14);
+}
+
+#ifdef ENVOY_MOBILE_XDS
 TEST(TestConfig, AddCdsLayer) {
   XdsBuilder xds_builder(/*xds_server_address=*/"fake-xds-server", /*xds_server_port=*/12345);
   xds_builder.addClusterDiscoveryService();

@@ -5,9 +5,11 @@
 #include "envoy/common/platform.h"
 #include "envoy/config/core/v3/base.pb.h"
 
+#include "source/common/api/os_sys_calls_impl.h"
 #include "source/common/http/utility.h"
 #include "source/common/network/socket_option_factory.h"
 #include "source/common/network/utility.h"
+#include "source/common/protobuf/utility.h"
 
 namespace Envoy {
 namespace Quic {
@@ -136,14 +138,22 @@ Http::StreamResetReason quicErrorCodeToEnvoyRemoteResetReason(quic::QuicErrorCod
 Network::ConnectionSocketPtr
 createConnectionSocket(const Network::Address::InstanceConstSharedPtr& peer_addr,
                        Network::Address::InstanceConstSharedPtr& local_addr,
-                       const Network::ConnectionSocket::OptionsSharedPtr& options) {
+                       const Network::ConnectionSocket::OptionsSharedPtr& options,
+                       const bool prefer_gro) {
   if (local_addr == nullptr) {
     local_addr = Network::Utility::getLocalAddress(peer_addr->ip()->version());
   }
   auto connection_socket = std::make_unique<Network::ConnectionSocketImpl>(
       Network::Socket::Type::Datagram, local_addr, peer_addr, Network::SocketCreationOptions{});
+  if (!connection_socket->isOpen()) {
+    ENVOY_LOG_MISC(error, "Failed to create socket");
+    return connection_socket;
+  }
   connection_socket->addOptions(Network::SocketOptionFactory::buildIpPacketInfoOptions());
   connection_socket->addOptions(Network::SocketOptionFactory::buildRxQueueOverFlowOptions());
+  if (prefer_gro && Api::OsSysCallsSingleton::get().supportsUdpGro()) {
+    connection_socket->addOptions(Network::SocketOptionFactory::buildUdpGroOptions());
+  }
   if (options != nullptr) {
     connection_socket->addOptions(options);
   }
@@ -253,6 +263,10 @@ void convertQuicConfig(const envoy::config::core::v3::QuicProtocolOptions& confi
   quic_config.SetConnectionOptionsToSend(quic::ParseQuicTagVector(config.connection_options()));
   quic_config.SetClientConnectionOptions(
       quic::ParseQuicTagVector(config.client_connection_options()));
+  if (config.has_idle_network_timeout()) {
+    quic_config.SetIdleNetworkTimeout(quic::QuicTimeDelta::FromSeconds(
+        DurationUtil::durationToSeconds(config.idle_network_timeout())));
+  }
 }
 
 void configQuicInitialFlowControlWindow(const envoy::config::core::v3::QuicProtocolOptions& config,
@@ -285,9 +299,8 @@ void adjustNewConnectionIdForRouting(quic::QuicConnectionId& new_connection_id,
                                      const quic::QuicConnectionId& old_connection_id) {
   char* new_connection_id_data = new_connection_id.mutable_data();
   const char* old_connection_id_ptr = old_connection_id.data();
-  auto* first_four_bytes = reinterpret_cast<const uint32_t*>(old_connection_id_ptr);
   // Override the first 4 bytes of the new CID to the original CID's first 4 bytes.
-  safeMemcpyUnsafeDst(new_connection_id_data, first_four_bytes);
+  memcpy(new_connection_id_data, old_connection_id_ptr, 4); // NOLINT(safe-memcpy)
 }
 
 } // namespace Quic

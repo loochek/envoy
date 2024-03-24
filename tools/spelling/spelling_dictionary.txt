@@ -6,6 +6,7 @@ ABI
 ACK
 ACL
 AES
+AJAX
 AllMuxes
 ALPN
 ALS
@@ -26,6 +27,8 @@ BACKTRACE
 BEL
 BBR
 BIDIRECTIONAL
+NID
+NIST
 bm
 BSON
 BPF
@@ -34,10 +37,12 @@ Bencoded
 CIO
 deadcode
 DFP
+Dynatrace
 DOM
 Gasd
 GiB
 IPTOS
+OTEL
 Repick
 Reserializer
 SION
@@ -261,6 +266,7 @@ integrations
 iouring
 jkl
 lang
+libcurl
 libsxg
 LLVM
 LPT
@@ -307,6 +313,7 @@ ODCDS
 middlewildcard
 monostate
 mpd
+mutators
 na
 oghttp
 OID
@@ -346,6 +353,9 @@ QDCOUNT
 QPACK
 QUIC
 QoS
+qat
+qatzip
+qatzstd
 RAII
 RANLUX
 RBAC
@@ -462,7 +472,6 @@ VM
 VPN
 WAITFORONE
 WASM
-WAVM
 WIP
 WKT
 WRONGPASS
@@ -740,6 +749,7 @@ exe
 execlp
 exprfor
 expectable
+extensibility
 extrahelp
 faceplant
 facto
@@ -761,6 +771,8 @@ fixdate
 fixup
 flatbuffer
 flatc
+fluentd
+Fluentd
 fmt
 fmtlib
 fn
@@ -822,6 +834,7 @@ hostnames
 hostset
 hotrestart
 hrefs
+htpasswd
 huffman
 hystrix
 idempotency
@@ -870,6 +883,7 @@ iteratively
 javascript
 jitter
 jittered
+joinable
 js
 kafka
 keepalive
@@ -956,6 +970,7 @@ moveable
 msec
 msg
 msghdr
+msgpack
 multi
 multicast
 multikill
@@ -984,6 +999,7 @@ netblocks
 netfilter
 netlink
 netmask
+NLB
 NLMSG
 nonblocking
 noncopyable
@@ -1164,6 +1180,7 @@ reparse
 repeatability
 reperform
 repicked
+replayable
 repo
 reproducibility
 requirepass
@@ -1233,6 +1250,9 @@ sigactions
 sigaltstack
 siginfo
 signalstack
+sigv
+sigv4
+sigv4a
 siloed
 sim
 sinked
@@ -1308,6 +1328,7 @@ suf
 superclass
 superroot
 superset
+supportability
 svc
 symlink
 symlinked

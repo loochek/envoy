@@ -7,7 +7,7 @@
 #include "envoy/secret/secret_manager.h"
 #include "envoy/ssl/context_manager.h"
 
-#include "source/extensions/transport_sockets/tls/context_impl.h"
+#include "source/common/tls/context_impl.h"
 
 namespace Envoy {
 namespace Ssl {
@@ -75,6 +75,7 @@ struct ClientSslTransportOptions {
       envoy::extensions::transport_sockets::tls::v3::TlsParameters::TLS_AUTO};
   bool use_expired_spiffe_cert_{false};
   bool client_with_intermediate_cert_{false};
+  // It is owned by the caller that invokes `setCustomCertValidatorConfig()`.
   envoy::config::core::v3::TypedExtensionConfig* custom_validator_config_{nullptr};
 };
 

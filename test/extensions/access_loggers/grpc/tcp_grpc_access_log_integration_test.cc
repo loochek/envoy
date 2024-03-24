@@ -11,16 +11,19 @@
 #include "source/common/buffer/zero_copy_input_stream_impl.h"
 #include "source/common/grpc/codec.h"
 #include "source/common/grpc/common.h"
+#include "source/common/tls/context_manager_impl.h"
+#include "source/common/tls/ssl_socket.h"
 #include "source/common/version/version.h"
 #include "source/extensions/filters/listener/tls_inspector/tls_inspector.h"
-#include "source/extensions/filters/network/rbac/config.h"
-#include "source/extensions/transport_sockets/tls/context_manager_impl.h"
-#include "source/extensions/transport_sockets/tls/ssl_socket.h"
 
 #include "test/common/grpc/grpc_client_integration.h"
 #include "test/integration/http_integration.h"
 #include "test/integration/ssl_utility.h"
 #include "test/test_common/utility.h"
+
+#if defined(USE_CEL)
+#include "source/extensions/filters/network/rbac/config.h"
+#endif // USE_CEL
 
 #include "gtest/gtest.h"
 
@@ -140,8 +143,8 @@ public:
                           const Ssl::ClientSslTransportOptions& ssl_options = {},
                           const std::string& curves_list = "") {
     // Set up the SSL client.
-    context_manager_ =
-        std::make_unique<Extensions::TransportSockets::Tls::ContextManagerImpl>(timeSystem());
+    context_manager_ = std::make_unique<Extensions::TransportSockets::Tls::ContextManagerImpl>(
+        server_factory_context_);
     Network::Address::InstanceConstSharedPtr address =
         Ssl::getSslAddress(version_, lookupPort("tcp_proxy"));
     context_ = Ssl::createClientSslTransportSocketFactory(ssl_options, *context_manager_, *api_);
@@ -407,6 +410,7 @@ tcp_logs:
   cleanup();
 }
 
+#if defined(USE_CEL)
 // Test RBAC.
 TEST_P(TcpGrpcAccessLogIntegrationTest, RBACAccessLogFlow) {
   config_helper_.addNetworkFilter(R"EOF(
@@ -489,6 +493,7 @@ tcp_logs:
 
   cleanup();
 }
+#endif // USE_CEL
 
 // Ssl Terminated by Envoy, no `ja3` fingerprint.
 TEST_P(TcpGrpcAccessLogIntegrationTest, SslTerminatedNoJA3) {
@@ -536,6 +541,7 @@ tcp_logs:
           subject_alt_name:
             uri: "spiffe://lyft.com/frontend-team"
           subject: "emailAddress=frontend-team@lyft.com,CN=Test Frontend Team,OU=Lyft Engineering,O=Lyft,L=San Francisco,ST=California,C=US"
+          issuer: "CN=Test CA,OU=Lyft Engineering,O=Lyft,L=San Francisco,ST=California,C=US"
       upstream_remote_address:
         socket_address:
       upstream_local_address:
@@ -600,6 +606,7 @@ tcp_logs:
           subject_alt_name:
             uri: "spiffe://lyft.com/frontend-team"
           subject: "emailAddress=frontend-team@lyft.com,CN=Test Frontend Team,OU=Lyft Engineering,O=Lyft,L=San Francisco,ST=California,C=US"
+          issuer: "CN=Test CA,OU=Lyft Engineering,O=Lyft,L=San Francisco,ST=California,C=US"
       upstream_remote_address:
         socket_address:
       upstream_local_address:

@@ -20,7 +20,8 @@ namespace Stats {
 class HistogramSettingsImpl : public HistogramSettings {
 public:
   HistogramSettingsImpl() = default;
-  HistogramSettingsImpl(const envoy::config::metrics::v3::StatsConfig& config);
+  HistogramSettingsImpl(const envoy::config::metrics::v3::StatsConfig& config,
+                        Server::Configuration::CommonFactoryContext& context);
 
   // HistogramSettings
   const ConstSupportedBuckets& buckets(absl::string_view stat_name) const override;
@@ -28,8 +29,9 @@ public:
   static ConstSupportedBuckets& defaultBuckets();
 
 private:
-  using Config = std::pair<Matchers::StringMatcherImpl<envoy::type::matcher::v3::StringMatcher>,
-                           ConstSupportedBuckets>;
+  using Config =
+      std::pair<Matchers::StringMatcherImplWithContext<envoy::type::matcher::v3::StringMatcher>,
+                ConstSupportedBuckets>;
   const std::vector<Config> configs_{};
 };
 
@@ -60,6 +62,7 @@ public:
   const std::vector<uint64_t>& computedBuckets() const override { return computed_buckets_; }
   std::vector<uint64_t> computeDisjointBuckets() const override;
   uint64_t sampleCount() const override { return sample_count_; }
+  uint64_t outOfBoundCount() const override { return out_of_bound_count_; }
   double sampleSum() const override { return sample_sum_; }
 
 private:
@@ -67,6 +70,7 @@ private:
   std::vector<double> computed_quantiles_;
   std::vector<uint64_t> computed_buckets_;
   uint64_t sample_count_{0};
+  uint64_t out_of_bound_count_{0};
   double sample_sum_{0};
   const Histogram::Unit unit_{Histogram::Unit::Unspecified};
 };

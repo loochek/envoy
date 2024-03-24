@@ -6,6 +6,7 @@
 
 #include "source/common/common/logger.h"
 #include "source/common/http/utility.h"
+#include "source/common/listener_manager/connection_handler_impl.h"
 #include "source/common/network/listen_socket_impl.h"
 #include "source/common/network/socket_option_factory.h"
 #include "source/common/network/udp_packet_writer_handler_impl.h"
@@ -14,7 +15,6 @@
 #include "source/common/quic/envoy_quic_utils.h"
 #include "source/common/quic/udp_gso_batch_writer.h"
 #include "source/common/runtime/runtime_impl.h"
-#include "source/extensions/listener_managers/listener_manager/connection_handler_impl.h"
 #include "source/extensions/quic/crypto_stream/envoy_quic_crypto_server_stream.h"
 #include "source/extensions/quic/proof_source/envoy_quic_proof_source_factory_impl.h"
 #include "source/server/configuration_impl.h"
@@ -112,7 +112,8 @@ protected:
         local_address_(Network::Test::getCanonicalLoopbackAddress(version_)),
         connection_handler_(*dispatcher_, absl::nullopt),
         transport_socket_factory_(true, *store_.rootScope(),
-                                  std::make_unique<NiceMock<Ssl::MockServerContextConfig>>()),
+                                  std::make_unique<NiceMock<Ssl::MockServerContextConfig>>(),
+                                  ssl_context_manager_, {}),
         quic_version_(quic::CurrentSupportedHttp3Versions()[0]),
         quic_stat_names_(listener_config_.listenerScope().symbolTable()) {}
 
@@ -328,6 +329,7 @@ protected:
   NiceMock<Network::MockUdpListenerConfig> udp_listener_config_;
   NiceMock<Network::MockListenerConfig> listener_config_;
   NiceMock<Network::MockUdpPacketWriterFactory> udp_packet_writer_factory_;
+  NiceMock<Ssl::MockContextManager> ssl_context_manager_;
   quic::QuicConfig quic_config_;
   Server::ConnectionHandlerImpl connection_handler_;
   std::unique_ptr<ActiveQuicListener> quic_listener_;
@@ -365,6 +367,13 @@ INSTANTIATE_TEST_SUITE_P(ActiveQuicListenerTests, ActiveQuicListenerTest,
 
 TEST_P(ActiveQuicListenerTest, ReceiveCHLO) {
   initialize();
+#if UDP_GSO_BATCH_WRITER_COMPILETIME_SUPPORT
+  EXPECT_TRUE(quic_listener_->udpPacketWriter().isBatchMode());
+#else
+  EXPECT_FALSE(quic_listener_->udpPacketWriter().isBatchMode());
+#endif
+  // The listener ignores read error.
+  quic_listener_->onReceiveError(Api::IoError::IoErrorCode::InvalidArgument);
   quic::QuicBufferedPacketStore* const buffered_packets =
       quic::test::QuicDispatcherPeer::GetBufferedPackets(quic_dispatcher_);
   maybeConfigureMocks(/* connection_count = */ 1);

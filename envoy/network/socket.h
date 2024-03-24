@@ -176,6 +176,8 @@ public:
   virtual absl::string_view name() const PURE;
 };
 
+class ListenerInfo;
+
 using FilterChainInfoConstSharedPtr = std::shared_ptr<const FilterChainInfo>;
 
 /**
@@ -253,6 +255,11 @@ public:
    * @return the filter chain info provider backing this socket.
    */
   virtual OptRef<const FilterChainInfo> filterChainInfo() const PURE;
+
+  /**
+   * @return the listener info backing this socket.
+   */
+  virtual OptRef<const ListenerInfo> listenerInfo() const PURE;
 };
 
 class ConnectionInfoSetter : public ConnectionInfoProvider {
@@ -324,6 +331,11 @@ public:
    * @param filter_chain_info the filter chain info provider backing this socket.
    */
   virtual void setFilterChainInfo(FilterChainInfoConstSharedPtr filter_chain_info) PURE;
+
+  /**
+   * @param listener_info the listener info provider backing this socket.
+   */
+  virtual void setListenerInfo(std::shared_ptr<const ListenerInfo> listener_info) PURE;
 };
 
 using ConnectionInfoSetterSharedPtr = std::shared_ptr<ConnectionInfoSetter>;
@@ -530,6 +542,13 @@ public:
    * @return the socket options stored earlier with addOption() and addOptions() calls, if any.
    */
   virtual const OptionsSharedPtr& options() const PURE;
+
+  /**
+   * @return a ParentDrainedCallbackRegistrar for UDP listen sockets during hot restart.
+   */
+  virtual OptRef<class ParentDrainedCallbackRegistrar> parentDrainedCallbackRegistrar() const {
+    return absl::nullopt;
+  }
 };
 
 using SocketPtr = std::unique_ptr<Socket>;

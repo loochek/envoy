@@ -12,6 +12,13 @@ envoy.access_loggers.extension_filters.cel:
   status: alpha
   type_urls:
   - envoy.extensions.access_loggers.filters.cel.v3.ExpressionFilter
+envoy.access_loggers.fluentd:
+  categories:
+  - envoy.access_loggers
+  security_posture: robust_to_untrusted_downstream
+  status: alpha
+  type_urls:
+  - envoy.extensions.access_loggers.fluentd.v3.FluentdAccessLogConfig
 envoy.access_loggers.http_grpc:
   categories:
   - envoy.access_loggers
@@ -197,16 +204,20 @@ envoy.filters.http.alternate_protocols_cache:
 envoy.filters.http.aws_lambda:
   categories:
   - envoy.filters.http
+  - envoy.filters.http.upstream
   security_posture: requires_trusted_downstream_and_upstream
   status: alpha
+  status_upstream: alpha
   type_urls:
   - envoy.extensions.filters.http.aws_lambda.v3.Config
   - envoy.extensions.filters.http.aws_lambda.v3.PerRouteConfig
 envoy.filters.http.aws_request_signing:
   categories:
   - envoy.filters.http
+  - envoy.filters.http.upstream
   security_posture: requires_trusted_downstream_and_upstream
   status: alpha
+  status_upstream: alpha
   type_urls:
   - envoy.extensions.filters.http.aws_request_signing.v3.AwsRequestSigning
   - envoy.extensions.filters.http.aws_request_signing.v3.AwsRequestSigningPerRoute
@@ -217,6 +228,13 @@ envoy.filters.http.bandwidth_limit:
   status: stable
   type_urls:
   - envoy.extensions.filters.http.bandwidth_limit.v3.BandwidthLimit
+envoy.filters.http.basic_auth:
+  categories:
+  - envoy.filters.http
+  security_posture: robust_to_untrusted_downstream
+  status: alpha
+  type_urls:
+  - envoy.extensions.filters.http.basic_auth.v3.BasicAuth
 envoy.filters.http.buffer:
   categories:
   - envoy.filters.http
@@ -319,8 +337,8 @@ envoy.filters.http.ext_authz:
 envoy.filters.http.ext_proc:
   categories:
   - envoy.filters.http
-  security_posture: unknown
-  status: alpha
+  security_posture: robust_to_untrusted_downstream_and_upstream
+  status: stable
   type_urls:
   - envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
   - envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
@@ -1014,7 +1032,7 @@ envoy.resource_monitors.downstream_connections:
   categories:
   - envoy.resource_monitors
   security_posture: data_plane_agnostic
-  status: wip
+  status: stable
   type_urls:
   - envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
 envoy.resource_monitors.fixed_heap:
@@ -1066,6 +1084,13 @@ envoy.route.early_data_policy.default:
   status: stable
   type_urls:
   - envoy.extensions.early_data.v3.DefaultEarlyDataPolicy
+envoy.router.cluster_specifier_plugin.lua:
+  categories:
+  - envoy.router.cluster_specifier_plugin
+  security_posture: robust_to_untrusted_downstream_and_upstream
+  status: alpha
+  type_urls:
+  - envoy.extensions.router.cluster_specifiers.lua.v3.LuaConfig
 envoy.stat_sinks.dog_statsd:
   categories:
   - envoy.stats_sinks
@@ -1115,6 +1140,13 @@ envoy.stat_sinks.wasm:
   status: alpha
   type_urls:
   - envoy.extensions.stat_sinks.wasm.v3.Wasm
+envoy.string_matcher.lua:
+  categories:
+  - envoy.string_matcher
+  security_posture: robust_to_untrusted_downstream_and_upstream
+  status: alpha
+  type_urls:
+  - envoy.extensions.string_matcher.lua.v3.Lua
 envoy.tls.cert_validator.spiffe:
   categories:
   - envoy.tls.cert_validator
@@ -1148,6 +1180,20 @@ envoy.tracers.opentelemetry:
   status: wip
   type_urls:
   - envoy.config.trace.v3.OpenTelemetryConfig
+envoy.tracers.opentelemetry.samplers.always_on:
+  categories:
+  - envoy.tracers.opentelemetry.samplers
+  security_posture: unknown
+  status: wip
+  type_urls:
+  - envoy.extensions.tracers.opentelemetry.samplers.v3.AlwaysOnSamplerConfig
+envoy.tracers.opentelemetry.samplers.dynatrace:
+  categories:
+  - envoy.tracers.opentelemetry.samplers
+  security_posture: unknown
+  status: wip
+  type_urls:
+  - envoy.extensions.tracers.opentelemetry.samplers.v3.DynatraceSamplerConfig
 envoy.tracers.skywalking:
   categories:
   - envoy.tracers
@@ -1301,14 +1347,6 @@ envoy.wasm.runtime.wamr:
   security_posture: unknown
   status: alpha
 envoy.wasm.runtime.wasmtime:
-  categories:
-  - envoy.wasm.runtime
-  # "This may never change from unknown until the threat model at
-  # https://envoyproxy.io/docs/envoy/latest/intro/arch_overview/security/threat_model#core-and-extensions
-  # is updated to capture additional Wasm runtimes".
-  security_posture: unknown
-  status: alpha
-envoy.wasm.runtime.wavm:
   categories:
   - envoy.wasm.runtime
   # "This may never change from unknown until the threat model at
@@ -1676,3 +1714,17 @@ envoy.filters.network.set_filter_state:
   status: alpha
   type_urls:
   - envoy.extensions.filters.network.set_filter_state.v3.Config
+envoy.tracers.opentelemetry.resource_detectors.environment:
+  categories:
+  - envoy.tracers.opentelemetry.resource_detectors
+  security_posture: unknown
+  status: wip
+  type_urls:
+  - envoy.extensions.tracers.opentelemetry.resource_detectors.v3.EnvironmentResourceDetectorConfig
+envoy.tracers.opentelemetry.resource_detectors.dynatrace:
+  categories:
+  - envoy.tracers.opentelemetry.resource_detectors
+  security_posture: unknown
+  status: wip
+  type_urls:
+  - envoy.extensions.tracers.opentelemetry.resource_detectors.v3.DynatraceResourceDetectorConfig

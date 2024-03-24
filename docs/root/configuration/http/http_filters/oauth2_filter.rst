@@ -38,7 +38,7 @@ is set to true the filter will send over a
 cookie named ``BearerToken`` to the upstream. Additionally, the ``Authorization`` header will be populated
 with the same value.
 
-The OAuth filer encodes URLs in query parameters using the
+The OAuth filter encodes URLs in query parameters using the
 `URL encoding algorithm. <https://www.w3.org/TR/html5/forms.html#application/x-www-form-urlencoded-encoding-algorithm>`_
 
 When receiving request redirected from the authorization service the Oauth filer decodes URLs from query parameters.
@@ -245,6 +245,11 @@ sending the user to the configured auth endpoint.
 :ref:`pass_through_matcher <envoy_v3_api_field_extensions.filters.http.oauth2.v3.OAuth2Config.pass_through_matcher>` provides
 an interface for users to provide specific header matching criteria such that, when applicable, the OAuth flow is entirely skipped.
 When this occurs, the ``oauth_passthrough`` metric is incremented but ``success`` is not.
+
+:ref:`deny_redirect_matcher <envoy_v3_api_field_extensions.filters.http.oauth2.v3.OAuth2Config.deny_redirect_matcher>` can be used to specify requests for which
+unauthorized response is returned on token expiration and will not automatically redirect to the authorization endpoint. Token refresh can be still performed
+during those requests by enabling the :ref:`use_refresh_token <envoy_v3_api_field_extensions.filters.http.oauth2.v3.OAuth2Config.use_refresh_token>` flag.
+This behavior can be useful for AJAX requests which cannot handle redirects correctly.
 
 :ref:`use_refresh_token <envoy_v3_api_field_extensions.filters.http.oauth2.v3.OAuth2Config.use_refresh_token>` provides
 possibility to update access token by using a refresh token. By default after expiration the user is always redirected to the authorization endpoint to log in again.

@@ -162,9 +162,10 @@ TagNameValues::TagNameValues() {
   // listener.<address|stat_prefix>.(worker_<id>.)*
   // listener_manager.(worker_<id>.)*
   // server.(worker_<id>.)*
+  // thread_local_cluster_manager.(worker_<id>.)*
   addRe2(
       WORKER_ID,
-      R"(^(?:listener\.(?:<ADDRESS>|<TAG_VALUE>)\.|server\.|listener_manager\.)worker_((\d+)\.))",
+      R"(^(?:listener\.(?:<ADDRESS>|<TAG_VALUE>)|server|listener_manager|thread_local_cluster_manager)\.worker_((\d+)\.))",
       "");
 
   // listener.(<address|stat_prefix>.)*, but specifically excluding "admin"
@@ -198,6 +199,18 @@ TagNameValues::TagNameValues() {
 
   // listener_local_rate_limit.(<stat_prefix>.)
   addTokenized(LOCAL_LISTENER_RATELIMIT_PREFIX, "listener_local_ratelimit.$.**");
+
+  // dns_filter.(<stat_prefix>.).**
+  addTokenized(DNS_FILTER_PREFIX, "dns_filter.$.**");
+
+  // connection_limit.(<stat_prefix>.)*
+  addTokenized(CONNECTION_LIMIT_PREFIX, "connection_limit.$.**");
+
+  // (<stat_prefix>.).rbac.**
+  addTokenized(RBAC_PREFIX, "$.rbac.**");
+
+  // http.<stat_prefix>.rbac.(<rules_stat_prefix>.)*
+  addTokenized(RBAC_HTTP_PREFIX, "http.*.rbac.$.**");
 }
 
 void TagNameValues::addRe2(const std::string& name, const std::string& regex,

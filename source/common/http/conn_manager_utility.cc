@@ -92,6 +92,8 @@ ConnectionManagerUtility::MutateRequestHeadersResult ConnectionManagerUtility::m
   if (!Utility::isUpgrade(request_headers)) {
     request_headers.removeConnection();
     request_headers.removeUpgrade();
+
+    sanitizeTEHeader(request_headers);
   }
 
   // Clean proxy headers.
@@ -289,6 +291,32 @@ ConnectionManagerUtility::MutateRequestHeadersResult ConnectionManagerUtility::m
   return {final_remote_address, absl::nullopt};
 }
 
+void ConnectionManagerUtility::sanitizeTEHeader(RequestHeaderMap& request_headers) {
+  if (!Runtime::runtimeFeatureEnabled("envoy.reloadable_features.sanitize_te")) {
+    return;
+  }
+
+  absl::string_view te_header = request_headers.getTEValue();
+  if (te_header.empty()) {
+    return;
+  }
+
+  // If the TE header contains the "trailers" value, set the TE header to "trailers" only.
+  std::vector<absl::string_view> te_values = absl::StrSplit(te_header, ',');
+  for (const absl::string_view& te_value : te_values) {
+    bool is_trailers =
+        absl::StripAsciiWhitespace(te_value) == Http::Headers::get().TEValues.Trailers;
+
+    if (is_trailers) {
+      request_headers.setTE(Http::Headers::get().TEValues.Trailers);
+      return;
+    }
+  }
+
+  // If the TE header does not contain the "trailers" value, remove the TE header.
+  request_headers.removeTE();
+}
+
 void ConnectionManagerUtility::cleanInternalHeaders(
     RequestHeaderMap& request_headers, bool edge_request,
     const std::list<Http::LowerCaseString>& internal_only_headers) {
@@ -298,9 +326,7 @@ void ConnectionManagerUtility::cleanInternalHeaders(
     request_headers.removeEnvoyDecoratorOperation();
     request_headers.removeEnvoyDownstreamServiceCluster();
     request_headers.removeEnvoyDownstreamServiceNode();
-    if (Runtime::runtimeFeatureEnabled("envoy.reloadable_features.sanitize_original_path")) {
-      request_headers.removeEnvoyOriginalPath();
-    }
+    request_headers.removeEnvoyOriginalPath();
   }
 
   // Headers to be stripped from edge *and* intermediate-hop external requests.
